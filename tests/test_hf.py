@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cached_hub.config import ENV_ENFORCE, ENV_PATH, CacheMissError
-from cached_hub.hf import (
+from cs_lab.config import ENV_ENFORCE, ENV_PATH, CacheMissError
+from cs_lab.hf import (
     HFModel,
     load_hf_dataset,
     load_hf_model,
@@ -41,7 +41,7 @@ def test_load_model_from_cache(tmp_path):
 def test_load_model_falls_back_to_hub_inside_cache(tmp_path, caplog):
     cls = MagicMock()
     with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
-        with caplog.at_level("WARNING", logger="cached_hub"):
+        with caplog.at_level("WARNING", logger="cs_lab"):
             load_hf_model("org/model", cls)
     cls.from_pretrained.assert_called_once_with(
         "org/model", cache_dir=str(tmp_path / "huggingface")

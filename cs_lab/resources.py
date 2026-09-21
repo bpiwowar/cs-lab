@@ -18,7 +18,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-logger = logging.getLogger("cached_hub")
+logger = logging.getLogger("cs_lab")
 
 
 class Resource(ABC):

@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from cached_hub import config
-from cached_hub.config import ENV_ENFORCE, ENV_PATH, CacheMissError
+from cs_lab import config
+from cs_lab.config import ENV_ENFORCE, ENV_PATH, CacheMissError
 
 
 def test_no_cache_when_unset():
@@ -65,7 +65,7 @@ def test_download_marker(tmp_path):
 
 def test_warn_cache_miss_warns_with_cache(tmp_path, caplog):
     with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
-        with caplog.at_level("WARNING", logger="cached_hub"):
+        with caplog.at_level("WARNING", logger="cs_lab"):
             config.warn_cache_miss("Model", "gpt2")
     assert "gpt2" in caplog.text and str(tmp_path) in caplog.text
 
@@ -79,7 +79,7 @@ def test_warn_cache_miss_raises_in_enforce_mode(tmp_path):
 
 def test_warn_cache_miss_silent_without_cache(caplog):
     with patch.dict(os.environ, {ENV_ENFORCE: "1"}, clear=True):
-        with caplog.at_level("WARNING", logger="cached_hub"):
+        with caplog.at_level("WARNING", logger="cs_lab"):
             config.warn_cache_miss("Model", "gpt2")  # no cache: never raises
     assert caplog.text == ""
 

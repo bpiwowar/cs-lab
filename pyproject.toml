@@ -3,12 +3,12 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cached-hub"
+name = "cs-lab"
 authors = [{ name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr" }]
-description = "Load HuggingFace models/datasets (and other course resources) from a shared local cache, falling back to the Hub; declare and pre-download them for classrooms"
+description = "The runtime a teaching notebook needs: a compute-profile ladder, hardware detection, and course resources from a shared local cache (falling back to the Hub)"
 readme = "README.md"
 license = { text = "MIT" }
-keywords = ["huggingface", "cache", "teaching", "datasets", "transformers"]
+keywords = ["teaching", "notebook", "huggingface", "cache", "profile", "hardware"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Education",
@@ -25,8 +25,9 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dynamic = ["version"]
-# No hard dependencies: transformers / datasets / pyterrier / datamaestro are
-# imported lazily, only by the functions that need them.
+# No hard dependencies: torch, transformers / datasets / pyterrier /
+# datamaestro are imported lazily, only by the functions that need them — a
+# student installs this package for a practical that may use none of them.
 dependencies = []
 
 [project.optional-dependencies]
@@ -43,20 +44,20 @@ dev = [
 ]
 
 [project.scripts]
-cached-hub = "cached_hub.cli:main"
+cs-lab = "cs_lab.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/bpiwowar/cached-hub"
-Repository = "https://github.com/bpiwowar/cached-hub"
+Homepage = "https://github.com/bpiwowar/cs-lab"
+Repository = "https://github.com/bpiwowar/cs-lab"
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "cached_hub/_version.py"
+version-file = "cs_lab/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cached_hub"]
+packages = ["cs_lab"]
 
 [tool.ruff]
 line-length = 88
@@ -80,7 +81,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # The CLI reports to stdout on purpose.
-"cached_hub/cli.py" = ["T20"]
+"cs_lab/cli.py" = ["T20"]
 "tests/*" = ["T20"]
 
 [tool.ruff.lint.mccabe]

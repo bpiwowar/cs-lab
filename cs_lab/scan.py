@@ -23,7 +23,7 @@ A constant rebound under a guard (``if test_mode:`` by default, see
 course swaps in when testing, and it has no business being downloaded for a
 classroom.
 
-A :class:`~cached_hub.profile.Profile` ladder says the same thing in one
+A :class:`~cs_lab.profile.Profile` ladder says the same thing in one
 expression, and is read the same way::
 
     class Profile(BaseProfile):
@@ -63,7 +63,7 @@ __all__ = [
 #: Default names whose ``if <name>:`` block marks an instructor-only stand-in.
 DEFAULT_GUARDS = ("test_mode", "TESTING_MODE")
 
-#: ``cached_hub`` loader -> (kind, class keyword, default class).
+#: ``cs_lab`` loader -> (kind, class keyword, default class).
 LOADERS = {
     "load_hf_model": ("model", "model_class", "AutoModel"),
     "load_hf_tokenizer": ("tokenizer", "tokenizer_class", "AutoTokenizer"),
@@ -113,11 +113,11 @@ class ScannedResource:
     cls: Optional[str] = None  # transformers class name, when relevant
     optional: bool = False  # loaded only under a guard / declared optional
     splits: Optional[Tuple[str, ...]] = None  # datasets only, never compared
-    bypass: bool = False  # loaded outside cached_hub, hence uncacheable
+    bypass: bool = False  # loaded outside cs_lab, hence uncacheable
 
     @property
     def identity(self) -> Tuple[str, str]:
-        """What ``cached_hub`` considers the same resource."""
+        """What ``cs_lab`` considers the same resource."""
         return (self.kind, self.key)
 
     def __str__(self) -> str:
@@ -232,28 +232,28 @@ def _literal(node: ast.expr) -> Optional[object]:
 
 
 def _normalise_rung(name: str) -> str:
-    """``fast_test`` / ``fast-test`` -> ``FAST_TEST``, as :mod:`cached_hub.profile`."""
+    """``fast_test`` / ``fast-test`` -> ``FAST_TEST``, as :mod:`cs_lab.profile`."""
     return name.strip().upper().replace("-", "_").replace(" ", "_")
 
 
 def _profile_base_aliases(tree: ast.AST) -> set:
-    """Names under which :class:`cached_hub.Profile` was imported.
+    """Names under which :class:`cs_lab.Profile` was imported.
 
-    ``from cached_hub import Profile as BaseProfile`` yields ``{"BaseProfile"}``,
+    ``from cs_lab import Profile as BaseProfile`` yields ``{"BaseProfile"}``,
     so the ``class Profile(BaseProfile)`` below it is recognised as a ladder
     even though it shadows the imported name.
     """
     aliases = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.module in ("cached_hub", "cached_hub.profile"):
+            if node.module in ("cs_lab", "cs_lab.profile"):
                 for alias in node.names:
                     if alias.name == "Profile":
                         aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "cached_hub" and alias.asname is None:
-                    aliases.add("cached_hub.Profile")
+                if alias.name == "cs_lab" and alias.asname is None:
+                    aliases.add("cs_lab.Profile")
     return aliases
 
 
@@ -699,7 +699,7 @@ def compare(
 ) -> Tuple[List[str], List[str]]:
     """Compare a scan with a declaration; return ``(errors, warnings)``.
 
-    Bypasses are ignored: a resource loaded outside ``cached_hub`` cannot be
+    Bypasses are ignored: a resource loaded outside ``cs_lab`` cannot be
     served from the cache, so declaring it would be a lie.
     """
     errors: List[str] = []

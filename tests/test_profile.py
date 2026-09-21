@@ -2,8 +2,8 @@
 
 import pytest
 
-from cached_hub import Profile as BaseProfile
-from cached_hub.profile import ENV_PROFILE
+from cs_lab import Profile as BaseProfile
+from cs_lab.profile import ENV_PROFILE
 
 
 class Profile(BaseProfile):

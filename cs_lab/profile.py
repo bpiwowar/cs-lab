@@ -10,7 +10,7 @@ retrieval and one on diffusion do not want the same rungs. So this module
 provides only the machinery, and each course declares its own rungs by
 subclassing :class:`Profile`::
 
-    from cached_hub import Profile as BaseProfile
+    from cs_lab import Profile as BaseProfile
 
     class Profile(BaseProfile):
         FAST_TEST = 0
@@ -32,7 +32,7 @@ meaningful. Notebooks then size themselves with :meth:`Profile.pick`::
 the widget and re-running a cell does what it looks like it does.
 
 Keeping this class here rather than in the course is what lets
-:mod:`cached_hub.scan` read a ladder out of a source file without importing it:
+:mod:`cs_lab.scan` read a ladder out of a source file without importing it:
 it finds the ``class X(Profile)`` statement, learns the rung names from it, and
 can then resolve every ``X.pick(...)`` call into the resources it may load.
 
@@ -54,7 +54,9 @@ import os
 from enum import IntEnum
 from typing import Any, Dict, List, Optional, Sequence
 
-logger = logging.getLogger("cached_hub")
+from cs_lab.notebook import is_notebook
+
+logger = logging.getLogger("cs_lab")
 
 ENV_PROFILE = "NOTEBOOK_PROFILE"
 ENV_PROFILE_WIDGET = "NOTEBOOK_PROFILE_WIDGET"
@@ -72,19 +74,6 @@ _ladder: Optional[type] = None
 def _normalise(name: str) -> str:
     """Fold a rung name to its canonical form (``fast-test`` -> ``FAST_TEST``)."""
     return name.strip().upper().replace("-", "_").replace(" ", "_")
-
-
-def is_notebook() -> bool:
-    """Return True when running under an IPython kernel (Jupyter, Colab)."""
-    try:
-        from IPython import get_ipython
-    except ImportError:
-        return False
-    shell = get_ipython()
-    return shell is not None and shell.__class__.__name__ in (
-        "ZMQInteractiveShell",
-        "Shell",  # Colab
-    )
 
 
 def _widgets_enabled() -> bool:

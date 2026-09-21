@@ -1,29 +1,51 @@
-"""cached-hub: HuggingFace (and other) resources from a shared local cache.
+"""cs-lab: what a teaching notebook needs from the machine it runs on.
+
+Three questions a practical has to answer, kept apart:
+
+*How much compute to spend* — a :class:`Profile` ladder the course declares,
+selected with ``NOTEBOOK_PROFILE`` or from the in-notebook chooser::
+
+    from cs_lab import Profile as BaseProfile
+
+    class Profile(BaseProfile):
+        FAST_TEST = 0
+        SMALL = 1
+        LOW_GPU = 2
+
+*What the machine offers* — device, dtype, and whether ``bitsandbytes`` or
+``vLLM`` actually work here (:func:`hardware`, see :mod:`cs_lab.machine`)::
+
+    hw = hardware(Profile)              # also shows the chooser, in a notebook
+    model = load_hf_model(Profile.pick(...), AutoModelForCausalLM, dtype=hw.dtype)
+    model.to(hw.device)
+
+*Where the weights come from* — a shared local cache, falling back to the Hub,
+so thirty laptops in a room do not each download the same model.
 
 Notebook side::
 
-    from cached_hub import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
+    from cs_lab import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
 
 Course side (declare what to pre-download)::
 
-    from cached_hub import make_hf_model_resource, make_hf_dataset_resource
+    from cs_lab import make_hf_model_resource, make_hf_dataset_resource
     RESOURCES = {"practical1": [make_hf_model_resource("gpt2"), ...]}
 
-then ``cached-hub download --from mycourse.resources:RESOURCES``.
+then ``cs-lab cache download --from mycourse.resources:RESOURCES``.
 
 For course data that is not a HuggingFace model/dataset (a tarball published
 on a course web server, say), use :func:`cached_download` instead -- same
-``CACHED_HUB_PATH`` root and cache-miss policy, with a plain relative-path
+``CS_LAB_PATH`` root and cache-miss policy, with a plain relative-path
 layout rather than the HuggingFace one.
 
-``cached-hub scan sources/`` reads the loader calls back out of the sources, so
+``cs-lab cache scan sources/`` reads the loader calls back out of the sources, so
 that a declaration can be written from them (``--emit``) and kept honest
-(``cached-hub check sources/ --declaration mycourse/resources.py``).
+(``cs-lab cache check sources/ --declaration mycourse/resources.py``).
 
-Configure the cache root with ``CACHED_HUB_PATH`` (see :mod:`cached_hub.config`).
+Configure the cache root with ``CS_LAB_PATH`` (see :mod:`cs_lab.config`).
 
 :class:`Profile` is the base for a course's compute ladder (see
-:mod:`cached_hub.profile`); the scanner reads ``Profile.pick(...)`` calls to
+:mod:`cs_lab.profile`); the scanner reads ``Profile.pick(...)`` calls to
 learn which of several models a notebook may load.
 """
 
@@ -46,6 +68,8 @@ from .hf import (
     make_hf_processor_resource,
     make_hf_tokenizer_resource,
 )
+from .machine import ENV_BACKEND, Hardware, add_state_note, hardware
+from .notebook import is_notebook
 from .profile import ENV_PROFILE, Profile, current_ladder
 from .pyterrier import make_pyterrier_dataset_resource
 from .resources import (
@@ -84,6 +108,12 @@ __all__ = [
     "ENV_PROFILE",
     "Profile",
     "current_ladder",
+    # the machine underneath
+    "ENV_BACKEND",
+    "Hardware",
+    "hardware",
+    "add_state_note",
+    "is_notebook",
     # loading
     "HFModel",
     "load_hf_dataset",

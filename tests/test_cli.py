@@ -8,12 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-from cached_hub.cli import load_resources, main
-from cached_hub.config import ENV_PATH
+from cs_lab.cli import load_resources, main
+from cs_lab.config import ENV_PATH
 
 MODULE = textwrap.dedent(
     """
-    from cached_hub import FunctionalResource
+    from cs_lab import FunctionalResource
 
     CALLS = []
 
@@ -62,12 +62,12 @@ def test_load_resources_bad_spec():
 
 def test_info(capsys):
     with patch.dict(os.environ, {ENV_PATH: "/data"}, clear=True):
-        assert main(["info"]) == 0
+        assert main(["cache", "info"]) == 0
     assert "/data" in capsys.readouterr().out
 
 
 def test_list(course, capsys):
-    assert main(["list", "--from", f"{course}:RESOURCES"]) == 0
+    assert main(["cache", "list", "--from", f"{course}:RESOURCES"]) == 0
     out = capsys.readouterr().out
     assert "practical1:" in out
     assert "- shared: Shared thing" in out
@@ -76,19 +76,28 @@ def test_list(course, capsys):
 
 def test_download_dedup_and_optional(course, tmp_path):
     with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
-        assert main(["download", "--from", f"{course}:get_resources"]) == 0
+        assert main(["cache", "download", "--from", f"{course}:get_resources"]) == 0
     assert sys.modules[course].CALLS == ["shared", "a"]
 
 
 def test_download_section_key_optional(course):
     mod_calls = lambda: sys.modules[course].CALLS  # noqa: E731
     with patch.dict(os.environ, {}, clear=True):
-        main(["download", "--from", f"{course}:RESOURCES", "--section", "practical2"])
+        main(
+            [
+                "cache",
+                "download",
+                "--from",
+                f"{course}:RESOURCES",
+                "--section",
+                "practical2",
+            ]
+        )
         assert mod_calls() == ["shared"]
-        main(["download", "--from", f"{course}:RESOURCES", "--optional"])
+        main(["cache", "download", "--from", f"{course}:RESOURCES", "--optional"])
         assert mod_calls() == ["shared", "shared", "a", "opt"]
         mod_calls().clear()
-        main(["download", "--from", f"{course}:RESOURCES", "--key", "opt"])
+        main(["cache", "download", "--from", f"{course}:RESOURCES", "--key", "opt"])
         assert mod_calls() == ["opt"]
 
 
@@ -114,7 +123,7 @@ def test_load_resources_file_with_a_bad_attribute(tmp_path):
 
 BROKEN = textwrap.dedent(
     """
-    from cached_hub import FunctionalResource
+    from cs_lab import FunctionalResource
 
     def _boom():
         raise ImportError("needs the Torchvision library")
@@ -137,15 +146,15 @@ def test_download_keep_going_survives_one_bad_resource(tmp_path, capsys):
     path.write_text(BROKEN)
     # Without --keep-going the exception propagates, as before
     with pytest.raises(ImportError):
-        main(["download", "--from", str(path)])
+        main(["cache", "download", "--from", str(path)])
 
-    assert main(["download", "--from", str(path), "--keep-going"]) == 1
+    assert main(["cache", "download", "--from", str(path), "--keep-going"]) == 1
     out = capsys.readouterr().out
     assert "1 resource(s) could not be downloaded" in out
     assert "practical1/broken: needs the Torchvision library" in out
 
 
 def test_download_does_not_set_the_root_logger_to_info(tmp_path, course):
-    main(["list", "--from", f"{course}:RESOURCES"])
+    main(["cache", "list", "--from", f"{course}:RESOURCES"])
     assert logging.getLogger().level == logging.WARNING
-    assert logging.getLogger("cached_hub").level == logging.INFO
+    assert logging.getLogger("cs_lab").level == logging.INFO

@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from cached_hub.resources import (
+from cs_lab.resources import (
     DownloadableResource,
     FunctionalResource,
     Resource,

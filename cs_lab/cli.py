@@ -5,19 +5,19 @@ which reads ``RESOURCES`` from a file that need not be importable): the module
 is imported and the attribute read from it. It must be a resource mapping
 (``{section: [Resource, ...]}``) or a zero-argument callable returning one::
 
-    cached-hub info
-    cached-hub list --from llm_course.resources:RESOURCES
-    cached-hub list --from src/llm_course/resources.py
-    cached-hub download --from llm_course.resources:get_resources --section practical2
-    cached-hub download --from llm_course.resources:RESOURCES --key gpt2
+    cs-lab cache info
+    cs-lab cache list --from llm_course.resources:RESOURCES
+    cs-lab cache list --from src/llm_course/resources.py
+    cs-lab cache download --from llm_course.resources:get_resources --section practical2
+    cs-lab cache download --from llm_course.resources:RESOURCES --key gpt2
 
 ``scan`` and ``check`` work the other way round, on the *sources* that load the
 resources: they read the loader calls out of the code, so that a declaration
 can be written from them (``scan --emit``) and kept honest (``check``)::
 
-    cached-hub scan  sources/
-    cached-hub scan  sources/ --emit 02-generation
-    cached-hub check sources/ --declaration mycourse/resources.py
+    cs-lab cache scan  sources/
+    cs-lab cache scan  sources/ --emit 02-generation
+    cs-lab cache check sources/ --declaration mycourse/resources.py
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _import_path(path: Path) -> object:
     """Import a ``.py`` file directly, without it being on ``sys.path``."""
     if not path.is_file():
         raise SystemExit(f"no such file: {path}")
-    name = f"_cached_hub_resources_{abs(hash(str(path.resolve())))}"
+    name = f"_cs_lab_resources_{abs(hash(str(path.resolve())))}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot import {path}")
@@ -171,7 +171,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     for section in sorted(scanned):
         print(f"{section}:")
         for resource in sorted(scanned[section], key=lambda r: (r.kind, r.key)):
-            note = "  (bypasses cached_hub)" if resource.bypass else ""
+            note = "  (bypasses cs_lab)" if resource.bypass else ""
             print(f"  - {resource}{note}")
     return 0
 
@@ -192,7 +192,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     if errors:
         print(
             f"\n{args.declaration} is out of sync ({len(errors)} difference(s)); "
-            "`cached-hub scan --emit <section>` prints a skeleton to start from."
+            "`cs-lab cache scan --emit <section>` prints a skeleton to start from."
         )
         return 1
     total = sum(1 for items in scanned.values() for r in items if not r.bypass)
@@ -202,12 +202,28 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="cached-hub",
+        prog="cs-lab",
+        description=(
+            "What a teaching notebook needs from the machine it runs on. The "
+            "compute-profile ladder and hardware detection are library-only "
+            "(`from cs_lab import Profile, hardware`); what has a command "
+            "line is the shared resource cache, below."
+        ),
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    groups = parser.add_subparsers(dest="group", required=True)
+
+    # Everything here is about the resource cache, and says so: the package
+    # covers more than that now (a profile ladder, hardware detection), and a
+    # later group must not have to compete with `list` or `check` for a name.
+    cache = groups.add_parser(
+        "cache",
+        help="the shared resource cache: inspect it, declare and download what "
+        "a course needs",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = cache.add_subparsers(dest="command", required=True)
 
     p_info = sub.add_parser("info", help="show the cache configuration")
     p_info.set_defaults(func=cmd_info)
@@ -299,7 +315,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(levelname)s:%(name)s:%(message)s",
     )
-    logging.getLogger("cached_hub").setLevel(
+    logging.getLogger("cs_lab").setLevel(
         logging.DEBUG if args.verbose else logging.INFO
     )
     return args.func(args)

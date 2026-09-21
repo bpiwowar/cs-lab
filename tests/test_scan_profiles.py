@@ -4,13 +4,13 @@ import textwrap
 
 import pytest
 
-from cached_hub.cli import main
-from cached_hub.scan import scan_paths
+from cs_lab.cli import main
+from cs_lab.scan import scan_paths
 
 LADDER = '''
 """A notebook that sizes itself with a profile ladder."""
-from cached_hub import Profile as BaseProfile
-from cached_hub import load_hf_dataset, load_hf_model, load_hf_tokenizer
+from cs_lab import Profile as BaseProfile
+from cs_lab import load_hf_dataset, load_hf_model, load_hf_tokenizer
 
 
 class Profile(BaseProfile):
@@ -37,7 +37,7 @@ n_queries = Profile.pick(200, fast_test=8)
 
 GUARDED = '''
 """A notebook still on the old test_mode guard."""
-from cached_hub import load_hf_model
+from cs_lab import load_hf_model
 
 MODEL = "big/model"
 if test_mode:
@@ -118,7 +118,10 @@ def test_a_pick_on_an_unrelated_class_is_ignored(tmp_path):
 
 
 def test_ladder_emit_is_valid_python(ladder_course, capsys):
-    assert main(["scan", str(ladder_course / "sources"), "--emit", "practical"]) == 0
+    assert (
+        main(["cache", "scan", str(ladder_course / "sources"), "--emit", "practical"])
+        == 0
+    )
     compile(capsys.readouterr().out, "<emit>", "exec")
 
 
@@ -134,7 +137,7 @@ def test_the_test_mode_guard_still_works(tmp_path):
 # --------------------------------------------------------------------------- #
 
 SPLIT_LADDER = """
-from cached_hub import Profile as BaseProfile
+from cs_lab import Profile as BaseProfile
 
 
 class Profile(BaseProfile):
@@ -144,7 +147,7 @@ class Profile(BaseProfile):
 """
 
 SPLIT_NOTEBOOK = """
-from cached_hub import load_hf_model
+from cs_lab import load_hf_model
 from mycourse.profiles import Profile
 
 MODEL = Profile.pick(fast_test="tiny/model", low_gpu="big/model")

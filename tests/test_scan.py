@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from cached_hub.cli import main
-from cached_hub.scan import compare, emit_section, parse_declaration, scan_paths
+from cs_lab.cli import main
+from cs_lab.scan import compare, emit_section, parse_declaration, scan_paths
 
 PRACTICAL1 = '''
 """A course notebook."""
-from cached_hub import load_hf_dataset, load_hf_model, load_hf_tokenizer
+from cs_lab import load_hf_dataset, load_hf_model, load_hf_tokenizer
 
 MODEL = "big/model"
 if test_mode:
@@ -22,7 +22,7 @@ model = load_hf_model(MODEL, AutoModelForCausalLM)
 '''
 
 PRACTICAL2 = """
-from cached_hub import HFModel
+from cs_lab import HFModel
 from mycourse.helpers import prepare
 
 hf = HFModel("other/model", model_cls=AutoModelForCausalLM)
@@ -31,14 +31,14 @@ reward = AutoModelForSequenceClassification.from_pretrained("bypassed/model")
 """
 
 HELPER = """
-from cached_hub import load_hf_processor
+from cs_lab import load_hf_processor
 
 processor = load_hf_processor("helper/model", CLIPProcessor)
 """
 
 DECLARATION = '''
 """Declared resources."""
-from cached_hub import (
+from cs_lab import (
     make_hf_dataset_resource,
     make_hf_model_resource,
     make_hf_processor_resource,
@@ -208,6 +208,7 @@ def test_emit_round_trips_through_the_parser(course, tmp_path):
 
 def test_cli_check_reports_drift(course, capsys):
     argv = [
+        "cache",
         "check",
         str(course / "sources"),
         "--declaration",
@@ -227,10 +228,10 @@ def test_cli_check_reports_drift(course, capsys):
 
 
 def test_cli_scan_emit_is_valid_python(course, capsys):
-    assert main(["scan", str(course / "sources"), "--emit", "practical1"]) == 0
+    assert main(["cache", "scan", str(course / "sources"), "--emit", "practical1"]) == 0
     compile(capsys.readouterr().out, "<emit>", "exec")
 
 
 def test_cli_scan_unknown_section(course):
     with pytest.raises(SystemExit):
-        main(["scan", str(course / "sources"), "--emit", "nope"])
+        main(["cache", "scan", str(course / "sources"), "--emit", "nope"])

@@ -2,14 +2,20 @@
 
 Environment variables
 ---------------------
-``CACHED_HUB_PATH``
+``CS_LAB_PATH``
     Root of the shared local cache. When unset, this library adds no caching
     of its own: loaders forward to ``from_pretrained`` / ``load_dataset``
     unchanged, so HuggingFace's usual cache (``~/.cache/huggingface``) applies.
-``CACHED_HUB_ENFORCE``
+``CS_LAB_ENFORCE``
     If set to any value, a cache miss raises :class:`CacheMissError` instead of
     falling back to the remote source. Useful to verify that everything a
     notebook needs is in the cache.
+
+The package used to be called ``cached-hub``, and a classroom machine may
+still export ``CACHED_HUB_PATH`` / ``CACHED_HUB_ENFORCE`` from a shell profile
+this code cannot edit. Those names are still read, once, with a word on
+stderr — a shared cache that silently stops being used is an afternoon of
+downloads in a room of thirty.
 
 On-disk layout
 --------------
@@ -35,28 +41,47 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
-logger = logging.getLogger("cached_hub")
+logger = logging.getLogger("cs_lab")
 
-ENV_PATH = "CACHED_HUB_PATH"
-ENV_ENFORCE = "CACHED_HUB_ENFORCE"
+ENV_PATH = "CS_LAB_PATH"
+ENV_ENFORCE = "CS_LAB_ENFORCE"
+#: What the same variables were called when the package was ``cached-hub``.
+LEGACY_ENV = {ENV_PATH: "CACHED_HUB_PATH", ENV_ENFORCE: "CACHED_HUB_ENFORCE"}
+_warned: set[str] = set()
+
+
+def _environ(name: str) -> Optional[str]:
+    """The variable's value, falling back to its ``CACHED_HUB_*`` spelling."""
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    legacy = LEGACY_ENV.get(name)
+    if legacy is None:
+        return None
+    value = os.environ.get(legacy)
+    if value is not None and legacy not in _warned:
+        _warned.add(legacy)
+        logger.warning("%s is the old name of %s; read it anyway", legacy, name)
+    return value
+
 
 #: Marker file written in a resource directory once its download completed.
 DOWNLOAD_MARKER = ".downloaded.ok"
 
 
 class CacheMissError(Exception):
-    """Raised on a cache miss when enforce mode is on (``CACHED_HUB_ENFORCE``)."""
+    """Raised on a cache miss when enforce mode is on (``CS_LAB_ENFORCE``)."""
 
 
 def get_cache_path() -> Optional[Path]:
     """Return the cache root, or ``None`` when no cache is configured."""
-    value = os.environ.get(ENV_PATH)
+    value = _environ(ENV_PATH)
     return Path(value) if value else None
 
 
 def is_enforce_mode() -> bool:
     """Return True when a cache miss must raise instead of falling back."""
-    return os.environ.get(ENV_ENFORCE) is not None
+    return _environ(ENV_ENFORCE) is not None
 
 
 def sanitize_id(resource_id: str) -> str:

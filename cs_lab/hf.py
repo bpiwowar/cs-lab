@@ -2,7 +2,7 @@
 
 Loading (in notebooks)::
 
-    from cached_hub import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
+    from cs_lab import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
 
     tokenizer = load_hf_tokenizer("gpt2")
     model = load_hf_model("gpt2", GPT2LMHeadModel)
@@ -13,7 +13,7 @@ Loading (in notebooks)::
 
 Declaring resources to pre-download (in a course's resource list)::
 
-    from cached_hub import make_hf_model_resource, make_hf_dataset_resource
+    from cs_lab import make_hf_model_resource, make_hf_dataset_resource
 
     RESOURCES = {
         "practical1": [
@@ -23,8 +23,8 @@ Declaring resources to pre-download (in a course's resource list)::
         ]
     }
 
-Each loader looks in the local cache (see :mod:`cached_hub.config`) and falls
-back to the Hub with a warning, or raises :class:`~cached_hub.config.CacheMissError`
+Each loader looks in the local cache (see :mod:`cs_lab.config`) and falls
+back to the Hub with a warning, or raises :class:`~cs_lab.config.CacheMissError`
 in enforce mode. ``transformers`` and ``datasets`` are imported lazily.
 """
 
@@ -43,7 +43,7 @@ from .config import (
 )
 from .resources import FunctionalResource, Resource
 
-logger = logging.getLogger("cached_hub")
+logger = logging.getLogger("cs_lab")
 
 PROVIDER = "huggingface"
 

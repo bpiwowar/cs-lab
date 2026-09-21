@@ -38,8 +38,8 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          uv run ruff check cached_hub tests
-          uv run ruff format --check cached_hub tests
+          uv run ruff check cs_lab tests
+          uv run ruff format --check cs_lab tests
 
       - name: Test with pytest
         timeout-minutes: 10
