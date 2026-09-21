@@ -10,7 +10,7 @@ has to answer three questions, and `cs-lab` answers one each:
 |---|---|---|
 | How much work should I do? | [`Profile`](#compute-profiles), a ladder the course declares | `NOTEBOOK_PROFILE` |
 | What does this machine offer? | [`hardware()`](#the-machine-underneath) — device, dtype, which libraries work | `NOTEBOOK_BACKEND` |
-| Where do the weights come from? | [the loaders](#supported-libraries) — a shared cache, the Hub on a miss | `CS_LAB_PATH` |
+| Where do the weights come from? | [the loaders](#supported-libraries) — a shared cache, the Hub on a miss | `CS_LAB_CACHE_PATH` |
 
 They are one package because a notebook asks all three in the same breath
 (`hardware(Profile)`, then `load_hf_model(Profile.pick(...), dtype=hw.dtype)`)
@@ -56,7 +56,7 @@ pip install "cs-lab[hf]"      # + transformers, datasets
 
 ## Supported libraries
 
-| Library                | cs-lab function                | Equivalent to                                   | Cached under `$CS_LAB_PATH`        | Pre-download with              |
+| Library                | cs-lab function                | Equivalent to                                   | Cached under `$CS_LAB_CACHE_PATH`        | Pre-download with              |
 |------------------------|------------------------------------|-------------------------------------------------|----------------------------------------|--------------------------------|
 | transformers           | `load_hf_model(id, cls=AutoModel, **kw)`        | `cls.from_pretrained(id, **kw)`        | `huggingface/models/<id>/`             | `make_hf_model_resource`       |
 | transformers           | `load_hf_tokenizer(id, cls=AutoTokenizer, **kw)`| `cls.from_pretrained(id, **kw)`        | `huggingface/tokenizers/<id>/`         | `make_hf_tokenizer_resource`   |
@@ -67,9 +67,9 @@ pip install "cs-lab[hf]"      # + transformers, datasets
 | datamaestro            | (use `datamaestro.prepare_dataset` directly)    | `prepare_dataset(id)`                  | datamaestro's own store (`DATAMAESTRO_DIR`) | `make_datamaestro_resource` |
 
 The loaders differ from their equivalents in one way only: with
-`CS_LAB_PATH` set, they first look for the resource in the cache layout
+`CS_LAB_CACHE_PATH` set, they first look for the resource in the cache layout
 above, log where it came from, and on a miss forward to the equivalent call
-with `cache_dir=$CS_LAB_PATH/huggingface` added (unless you passed one), or
+with `cache_dir=$CS_LAB_CACHE_PATH/huggingface` added (unless you passed one), or
 raise `CacheMissError` in enforce mode. PyTerrier and datamaestro manage their
 own caches, so there is no loader for them: `cs-lab` only declares them as
 resources so that `cs-lab cache download` fetches everything a course needs in
@@ -99,23 +99,23 @@ warning. Extra keyword arguments go to `from_pretrained` / `load_dataset`.
 
 | Variable             | Effect                                                                 |
 |----------------------|------------------------------------------------------------------------|
-| `CS_LAB_PATH`    | Root of the shared cache. Unset: the library does nothing (see below). |
-| `CS_LAB_ENFORCE` | If set (any value), a cache miss raises `CacheMissError` instead of falling back. |
+| `CS_LAB_CACHE_PATH`    | Root of the shared cache. Unset: the library does nothing (see below). |
+| `CS_LAB_CACHE_ENFORCE` | If set (any value), a cache miss raises `CacheMissError` instead of falling back. |
 
 Layout under the root (`org/name` becomes `org-name`):
 
 ```
-$CS_LAB_PATH/huggingface/models/<id>/                 model.save_pretrained()
-$CS_LAB_PATH/huggingface/tokenizers/<id>/
-$CS_LAB_PATH/huggingface/processors/<id>/
-$CS_LAB_PATH/huggingface/datasets/<id>[-<name>]/<split>/   dataset.save_to_disk()
-$CS_LAB_PATH/huggingface/                             HF cache_dir used for fallbacks
+$CS_LAB_CACHE_PATH/huggingface/models/<id>/                 model.save_pretrained()
+$CS_LAB_CACHE_PATH/huggingface/tokenizers/<id>/
+$CS_LAB_CACHE_PATH/huggingface/processors/<id>/
+$CS_LAB_CACHE_PATH/huggingface/datasets/<id>[-<name>]/<split>/   dataset.save_to_disk()
+$CS_LAB_CACHE_PATH/huggingface/                             HF cache_dir used for fallbacks
 ```
 
 A directory is used only when it contains the marker `.downloaded.ok`, written
 after a successful download, so a half-copied model is never picked up.
 
-**Without `CS_LAB_PATH`, `cs-lab` adds no caching of its own.**
+**Without `CS_LAB_CACHE_PATH`, `cs-lab` adds no caching of its own.**
 `load_hf_model("gpt2", cls, **kw)` is then exactly `cls.from_pretrained("gpt2", **kw)`,
 and `load_hf_dataset(...)` exactly `datasets.load_dataset(...)`: the usual
 HuggingFace cache (`~/.cache/huggingface`, `HF_HOME`) applies as it always does,
@@ -160,7 +160,7 @@ RESOURCES = {
 then, on the machine that hosts the cache:
 
 ```sh
-export CS_LAB_PATH=/shared/cache
+export CS_LAB_CACHE_PATH=/shared/cache
 cs-lab cache info
 cs-lab cache list     --from mycourse.resources:RESOURCES
 cs-lab cache download --from mycourse.resources:RESOURCES               # everything but optional
@@ -333,7 +333,7 @@ check-resources:
 ## Checking a cache before class
 
 ```sh
-CS_LAB_PATH=/shared/cache CS_LAB_ENFORCE=1 python practical1.py
+CS_LAB_CACHE_PATH=/shared/cache CS_LAB_CACHE_ENFORCE=1 python practical1.py
 ```
 
 fails at the first resource that would have gone to the Hub.

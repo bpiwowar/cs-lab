@@ -2,20 +2,21 @@
 
 Environment variables
 ---------------------
-``CS_LAB_PATH``
+``CS_LAB_CACHE_PATH``
     Root of the shared local cache. When unset, this library adds no caching
     of its own: loaders forward to ``from_pretrained`` / ``load_dataset``
     unchanged, so HuggingFace's usual cache (``~/.cache/huggingface``) applies.
-``CS_LAB_ENFORCE``
+``CS_LAB_CACHE_ENFORCE``
     If set to any value, a cache miss raises :class:`CacheMissError` instead of
     falling back to the remote source. Useful to verify that everything a
     notebook needs is in the cache.
 
-The package used to be called ``cached-hub``, and a classroom machine may
-still export ``CACHED_HUB_PATH`` / ``CACHED_HUB_ENFORCE`` from a shell profile
-this code cannot edit. Those names are still read, once, with a word on
-stderr — a shared cache that silently stops being used is an afternoon of
-downloads in a room of thirty.
+Both were called something else before: ``CS_LAB_PATH`` / ``CS_LAB_ENFORCE``
+until the cache became one part of this package rather than all of it, and
+``CACHED_HUB_PATH`` / ``CACHED_HUB_ENFORCE`` before the rename. A classroom
+machine exports them from a shell profile this code cannot edit, so they are
+still read — once, with a word on stderr. A shared cache that silently stops
+being used is an afternoon of downloads in a room of thirty.
 
 On-disk layout
 --------------
@@ -43,26 +44,34 @@ from typing import Iterator, Optional
 
 logger = logging.getLogger("cs_lab")
 
-ENV_PATH = "CS_LAB_PATH"
-ENV_ENFORCE = "CS_LAB_ENFORCE"
-#: What the same variables were called when the package was ``cached-hub``.
-LEGACY_ENV = {ENV_PATH: "CACHED_HUB_PATH", ENV_ENFORCE: "CACHED_HUB_ENFORCE"}
+ENV_PATH = "CS_LAB_CACHE_PATH"
+ENV_ENFORCE = "CS_LAB_CACHE_ENFORCE"
+#: Older spellings of each variable, tried in turn: ``CS_LAB_*`` from before
+#: the cache commands were grouped, and ``CACHED_HUB_*`` from before the
+#: package was renamed. A classroom machine exports them from a shell profile
+#: this code cannot edit, and a shared cache that silently stops being used is
+#: an afternoon of downloads in a room of thirty.
+LEGACY_ENV = {
+    ENV_PATH: ("CS_LAB_PATH", "CACHED_HUB_PATH"),
+    ENV_ENFORCE: ("CS_LAB_ENFORCE", "CACHED_HUB_ENFORCE"),
+}
 _warned: set[str] = set()
 
 
 def _environ(name: str) -> Optional[str]:
-    """The variable's value, falling back to its ``CACHED_HUB_*`` spelling."""
+    """The variable's value, falling back to its older spellings."""
     value = os.environ.get(name)
     if value is not None:
         return value
-    legacy = LEGACY_ENV.get(name)
-    if legacy is None:
-        return None
-    value = os.environ.get(legacy)
-    if value is not None and legacy not in _warned:
-        _warned.add(legacy)
-        logger.warning("%s is the old name of %s; read it anyway", legacy, name)
-    return value
+    for legacy in LEGACY_ENV.get(name, ()):
+        value = os.environ.get(legacy)
+        if value is None:
+            continue
+        if legacy not in _warned:
+            _warned.add(legacy)
+            logger.warning("%s is the old name of %s; read it anyway", legacy, name)
+        return value
+    return None
 
 
 #: Marker file written in a resource directory once its download completed.
@@ -70,7 +79,7 @@ DOWNLOAD_MARKER = ".downloaded.ok"
 
 
 class CacheMissError(Exception):
-    """Raised on a cache miss when enforce mode is on (``CS_LAB_ENFORCE``)."""
+    """Raised on a cache miss when enforce mode is on (``CS_LAB_CACHE_ENFORCE``)."""
 
 
 def get_cache_path() -> Optional[Path]:

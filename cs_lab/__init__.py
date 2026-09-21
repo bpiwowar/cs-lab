@@ -35,14 +35,14 @@ then ``cs-lab cache download --from mycourse.resources:RESOURCES``.
 
 For course data that is not a HuggingFace model/dataset (a tarball published
 on a course web server, say), use :func:`cached_download` instead -- same
-``CS_LAB_PATH`` root and cache-miss policy, with a plain relative-path
+``CS_LAB_CACHE_PATH`` root and cache-miss policy, with a plain relative-path
 layout rather than the HuggingFace one.
 
 ``cs-lab cache scan sources/`` reads the loader calls back out of the sources, so
 that a declaration can be written from them (``--emit``) and kept honest
 (``cs-lab cache check sources/ --declaration mycourse/resources.py``).
 
-Configure the cache root with ``CS_LAB_PATH`` (see :mod:`cs_lab.config`).
+Configure the cache root with ``CS_LAB_CACHE_PATH`` (see :mod:`cs_lab.config`).
 
 :class:`Profile` is the base for a course's compute ladder (see
 :mod:`cs_lab.profile`); the scanner reads ``Profile.pick(...)`` calls to

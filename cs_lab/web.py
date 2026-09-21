@@ -2,8 +2,8 @@
 HuggingFace layout in :mod:`cs_lab.config` (course-specific data
 published as a plain file or a ``.tar.gz`` on a course web server).
 
-Shares the same ``CS_LAB_PATH`` root and the same cache-miss policy
-(``CS_LAB_ENFORCE``) as the HuggingFace loaders, plus a per-user temp
+Shares the same ``CS_LAB_CACHE_PATH`` root and the same cache-miss policy
+(``CS_LAB_CACHE_ENFORCE``) as the HuggingFace loaders, plus a per-user temp
 directory fallback for shared caches that a student can read but not write
 to::
 
@@ -14,7 +14,7 @@ to::
         "llm/lotte-technology-100000",
     )
 
-Layout: ``<CS_LAB_PATH>/custom/<name>`` -- a fixed ``custom/`` subfolder,
+Layout: ``<CS_LAB_CACHE_PATH>/custom/<name>`` -- a fixed ``custom/`` subfolder,
 parallel to the ``huggingface/`` one HF resources use (see
 :mod:`cs_lab.config`), so a course choosing a ``name`` can never collide
 with the HF layout.
@@ -118,19 +118,19 @@ def cached_download(url: str, name: str) -> Path:
 
     Resolution order:
 
-    1. ``<CS_LAB_PATH>/custom/<name>`` already there -- used as is.
-    2. ``CS_LAB_PATH`` set, entry missing, root writable -- downloaded
+    1. ``<CS_LAB_CACHE_PATH>/custom/<name>`` already there -- used as is.
+    2. ``CS_LAB_CACHE_PATH`` set, entry missing, root writable -- downloaded
        there. This is what pre-filling the shared cache for a classroom does.
-    3. ``CS_LAB_PATH`` set, entry missing, root read-only -- downloaded to
+    3. ``CS_LAB_CACHE_PATH`` set, entry missing, root read-only -- downloaded to
        a per-user temp directory instead. Later calls reuse that copy, but it
        does not survive a reboot -- the usual case on lab machines, where
        students may read the shared cache but not write to it.
-    4. ``CS_LAB_PATH`` unset -- ``outputs/cache/<name>``, relative to the
+    4. ``CS_LAB_CACHE_PATH`` unset -- ``outputs/cache/<name>``, relative to the
        current directory, so pre-downloading and running the notebook from
        different directories downloads the file twice.
 
     Raises :class:`~cs_lab.config.CacheMissError` in enforce mode
-    (``CS_LAB_ENFORCE``) instead of downloading.
+    (``CS_LAB_CACHE_ENFORCE``) instead of downloading.
     """
     root = get_cache_path()
 

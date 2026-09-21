@@ -96,3 +96,24 @@ def test_describe():
         assert ENV_PATH in config.describe()
     with patch.dict(os.environ, {ENV_PATH: "/x", ENV_ENFORCE: "1"}, clear=True):
         assert "enforce" in config.describe()
+
+
+def test_the_older_names_of_the_cache_variables_are_still_read(monkeypatch, caplog):
+    """A lab machine exports them from a profile this code cannot edit."""
+    from cs_lab import config as config_module
+
+    for name in ("CS_LAB_CACHE_PATH", "CS_LAB_PATH", "CACHED_HUB_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config_module, "_warned", set())
+
+    monkeypatch.setenv("CACHED_HUB_PATH", "/srv/from-the-old-name")
+    assert str(config.get_cache_path()) == "/srv/from-the-old-name"
+    assert "CACHED_HUB_PATH" in caplog.text
+
+    # the intermediate spelling wins over the oldest one
+    monkeypatch.setenv("CS_LAB_PATH", "/srv/intermediate")
+    assert str(config.get_cache_path()) == "/srv/intermediate"
+
+    # and the current one over both
+    monkeypatch.setenv("CS_LAB_CACHE_PATH", "/srv/current")
+    assert str(config.get_cache_path()) == "/srv/current"
