@@ -44,9 +44,6 @@ first-class thing:
 - an *enforce* mode turns any cache miss into an error, so you can check that
   every notebook runs fully from the cache before the session.
 
-It was extracted from the Sorbonne Master MIND `master-mind` tool so that a
-course only needs this package.
-
 ## Install
 
 ```sh
