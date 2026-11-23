@@ -347,6 +347,7 @@ into a folder a student can work in and still update:
 ```sh
 uvx cs-lab course init https://example.org/course/practical/  # -> ./<course name>
 cd <course name>
+uvx cs-lab course lab             # JupyterLab, from the folder's environment
 uvx cs-lab course update          # later, whenever the course says so
 uvx cs-lab course status          # the release you have, what you changed
 ```
@@ -378,8 +379,11 @@ dependencies the student added (or removed) are replayed with `uv add` /
 `uv remove`, so uv keeps every version the course pinned and resolves only
 theirs; then `uv sync`. `--reset-env` takes the course's environment as is.
 
-In a teaching room, `--shared-env PATH` uses an environment the teacher built
-instead: the folder then has no environment files, and an update warns when
+In a teaching room, the folder uses an environment the teacher built instead
+— the same commands, no option: the release names it (`shared_env` in
+`release.json`, an absolute path), and `init` takes it when that path exists
+on the machine (`--own-env` refuses it, `--shared-env PATH` names another).
+The folder then has no environment files, and an update warns when
 the shared environment was built from another release's lock (it keeps a copy
 as `PATH/uv.lock`). If the folder is a git repository, an update commits the
 student's work before, and the new release after.

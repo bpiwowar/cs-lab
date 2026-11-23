@@ -65,6 +65,9 @@ class Release:
     env: List[str] = field(default_factory=list)
     lock: Optional[str] = None
     source: Optional[str] = None
+    #: Where a teaching room's shared environment for this release lives (an
+    #: absolute path): ``init`` uses it when it exists on the machine.
+    shared_env: Optional[str] = None
 
     @classmethod
     def fetch(cls, url: str) -> "Release":
@@ -94,6 +97,7 @@ class Release:
                 env=list(data.get("env", [])),
                 lock=data.get("lock"),
                 source=data.get("source"),
+                shared_env=data.get("shared_env") or None,
             )
         except KeyError as exc:
             raise ReleaseError(f"{url}: missing {exc} in the release") from exc

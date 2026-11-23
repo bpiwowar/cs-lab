@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from cs_lab.course import Chooser, Course, Folder, Release, ReleaseError, notebooks
+from cs_lab.course import (
+    Chooser,
+    Course,
+    CourseError,
+    Folder,
+    Release,
+    ReleaseError,
+    notebooks,
+)
 from cs_lab.course import env as course_env
 from cs_lab.course.plan import ADD, CONFLICT, DELETE, UPDATE, classify
 
@@ -79,7 +87,9 @@ def v2():
     return files
 
 
-def publish(site: Path, files: dict, name: str = "tp-test") -> str:
+def publish(
+    site: Path, files: dict, name: str = "tp-test", shared_env: str = ""
+) -> str:
     """Write a release (zip + release.json) into ``site``; return its URL."""
     site.mkdir(parents=True, exist_ok=True)
     bundle = site / "tp.zip"
@@ -105,6 +115,8 @@ def publish(site: Path, files: dict, name: str = "tp-test") -> str:
     }
     if "uv.lock" in hashes:
         release["lock"] = hashes["uv.lock"]
+    if shared_env:
+        release["shared_env"] = shared_env
     (site / "release.json").write_text(json.dumps(release))
     return site.as_uri()
 
@@ -395,11 +407,17 @@ def test_untouched_environment_is_simply_replaced(tmp_path, site, course, monkey
     assert not (folder / "pyproject.mine.toml").exists()
 
 
+def shared_env(path: Path) -> Path:
+    """A stand-in for a teaching room's environment, built from V1's lock."""
+    (path / "bin").mkdir(parents=True)
+    (path / "bin" / "python").write_text("")
+    (path / "uv.lock").write_text(V1["uv.lock"])
+    return path
+
+
 def test_shared_mode_leaves_the_environment_out(tmp_path, site, course):
     course_obj, lines = course
-    shared = tmp_path / "shared"
-    shared.mkdir()
-    (shared / "uv.lock").write_text("version = 1\n# v1\n")
+    shared = shared_env(tmp_path / "shared")
     folder = setup_folder(tmp_path, site, course_obj, shared_env=shared)
     assert not (folder / "pyproject.toml").exists()
     assert Folder(folder).load().mode == "shared"
@@ -408,6 +426,76 @@ def test_shared_mode_leaves_the_environment_out(tmp_path, site, course):
     course_obj.update(folder, sync=False)
     assert not (folder / "uv.lock").exists()
     assert any("shared environment was built for another" in line for line in lines)
+
+
+def test_init_uses_the_room_environment_when_it_is_there(tmp_path, site, course):
+    course_obj, lines = course
+    shared = shared_env(tmp_path / "room")
+    url = publish(site, V1, shared_env=str(shared))
+    folder = tmp_path / "work"
+    assert course_obj.init(url, folder, sync=False) == 0
+    config = Folder(folder).load()
+    assert (config.mode, config.shared_env) == ("shared", str(shared))
+    assert not (folder / "uv.lock").exists()
+    assert any("shared environment of this room" in line for line in lines)
+
+
+@pytest.mark.parametrize("why", ["absent", "own-env"])
+def test_init_makes_its_own_environment_otherwise(tmp_path, site, course, why):
+    course_obj, _ = course
+    shared = tmp_path / "room"
+    if why == "own-env":
+        shared_env(shared)
+    url = publish(site, V1, shared_env=str(shared))
+    folder = tmp_path / "work"
+    assert course_obj.init(url, folder, sync=False, own_env=why == "own-env") == 0
+    assert Folder(folder).load().mode == "own"
+    assert (folder / "uv.lock").exists()
+
+
+def test_update_follows_a_moved_room_environment(tmp_path, site, course):
+    course_obj, lines = course
+    url = publish(site, V1, shared_env=str(shared_env(tmp_path / "room")))
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False)
+    moved = shared_env(tmp_path / "room2")
+    publish(site, V1, shared_env=str(moved))
+    course_obj.update(folder, sync=False)
+    assert Folder(folder).load().shared_env == str(moved)
+
+
+@pytest.mark.parametrize("mode", ["shared", "own"])
+def test_lab_runs_jupyter_from_the_folder_environment(tmp_path, site, mode):
+    calls = []
+    course_obj = Course(
+        show=lambda _: None, run=lambda cmd, cwd: calls.append((cmd, cwd)) or 0
+    )
+    shared = shared_env(tmp_path / "room")
+    url = publish(site, V1, shared_env=str(shared))
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False, own_env=mode == "own")
+    assert course_obj.lab(folder) == 0
+    ((command, cwd),) = calls
+    assert cwd == folder
+    if mode == "shared":
+        assert command == [
+            str(shared / "bin" / "python"),
+            "-m",
+            "jupyter",
+            "lab",
+            "notebooks",
+        ]
+    else:
+        assert command == ["uv", "run", "jupyter", "lab", "notebooks"]
+
+
+def test_lab_says_when_the_room_environment_is_missing(tmp_path, site, course):
+    course_obj, _ = course
+    shared = shared_env(tmp_path / "room")
+    folder = setup_folder(tmp_path, site, course_obj, shared_env=shared)
+    shutil.rmtree(shared)
+    with pytest.raises(CourseError, match="not on this machine"):
+        course_obj.lab(folder)
 
 
 # ---- safety ----------------------------------------------------------------

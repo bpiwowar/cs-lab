@@ -13,6 +13,11 @@ left alone, and for a file both changed the student chooses —
 — per file when asked in a terminal, or once for all with ``--on-conflict``
 (or ``on_conflict`` in ``.course/config.toml``). Without a terminal and without
 a choice, ``new``: it never touches the student's file.
+
+The same commands work in a teaching room and at home: a release can name the
+room's shared environment (``shared_env``), and ``init`` uses it when it is
+there — otherwise the folder gets an environment of its own. ``lab`` starts
+JupyterLab from whichever the folder uses.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 from . import env as course_env
 from . import notebooks
@@ -195,10 +200,20 @@ def _git_snapshot(root: Path, message: str) -> bool:
 # ---- the commands ---------------------------------------------------------
 
 
+def _run(command: List[str], cwd: Path) -> int:
+    return subprocess.call(command, cwd=cwd)
+
+
+def usable_env(path: Optional[Path]) -> bool:
+    """Whether ``path`` holds an environment this machine can run."""
+    return path is not None and (Path(path) / "bin" / "python").exists()
+
+
 class Course:
-    def __init__(self, show=print, ask: Optional[Ask] = None):
+    def __init__(self, show=print, ask: Optional[Ask] = None, run=_run):
         self.show = show
         self.ask = ask
+        self.run = run
 
     def init(
         self,
@@ -207,6 +222,7 @@ class Course:
         shared_env: Optional[Path] = None,
         on_conflict: str = "",
         sync: bool = True,
+        own_env: bool = False,
     ) -> int:
         release = Release.fetch(url)
         folder = Folder(Path(directory) if directory else Path(release.name))
@@ -214,8 +230,14 @@ class Course:
             raise CourseError(
                 f"{folder.root} is already a course folder: `cs-lab course update`"
             )
-        if shared_env is not None and not Path(shared_env).is_dir():
+        if shared_env is not None and not usable_env(shared_env):
             raise CourseError(f"no shared environment at {shared_env}")
+        if shared_env is None and not own_env and usable_env(release.shared_env):
+            shared_env = Path(release.shared_env)
+            self.show(
+                f"Using the shared environment of this room, {shared_env} "
+                "(--own-env for one of your own)"
+            )
         config = Config(
             url=release.url,
             name=release.name,
@@ -242,6 +264,16 @@ class Course:
             raise CourseError(
                 f"{config.url} now serves {release.name!r}, not {config.name!r}"
             )
+        moved = release.shared_env
+        if (
+            config.mode == "shared"
+            and moved
+            and moved != config.shared_env
+            and usable_env(Path(moved))
+        ):
+            self.show(f"The shared environment is now {moved}")
+            config.shared_env = moved
+            folder.save(config)
         if release.id == config.release and not reset_env:
             self.show(f"Up to date (release {release.id}, {release.created}).")
             return 0
@@ -254,6 +286,27 @@ class Course:
             reset_env=reset_env,
             sync=sync,
         )
+
+    def lab(self, directory: Path = Path("."), args: Sequence[str] = ()) -> int:
+        """JupyterLab, from the folder's environment (shared or its own)."""
+        folder = Folder(directory)
+        config = folder.load()
+        args = list(args)
+        if not args and (folder.root / "notebooks").is_dir():
+            args = ["notebooks"]
+        if config.mode == "shared":
+            env = Path(config.shared_env)
+            if not usable_env(env):
+                raise CourseError(
+                    f"the shared environment {env} is not on this machine "
+                    "(this folder was set up in a teaching room)"
+                )
+            command = [str(env / "bin" / "python"), "-m", "jupyter", "lab", *args]
+        else:
+            if shutil.which("uv") is None:
+                raise CourseError("uv is not installed: https://docs.astral.sh/uv/")
+            command = ["uv", "run", "jupyter", "lab", *args]
+        return self.run(command, folder.root)
 
     def status(self, directory: Path = Path("."), offline: bool = False) -> int:
         folder = Folder(directory)

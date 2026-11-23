@@ -322,6 +322,7 @@ def cmd_course_init(args: argparse.Namespace) -> int:
         shared_env=args.shared_env,
         on_conflict=args.on_conflict or "",
         sync=not args.no_sync,
+        own_env=args.own_env,
     )
 
 
@@ -333,6 +334,10 @@ def cmd_course_update(args: argparse.Namespace) -> int:
         reset_env=args.reset_env,
         sync=not args.no_sync,
     )
+
+
+def cmd_course_lab(args: argparse.Namespace) -> int:
+    return _course(args).lab(args.directory, args.lab_args)
 
 
 def cmd_course_status(args: argparse.Namespace) -> int:
@@ -380,7 +385,13 @@ def add_course_parser(groups) -> None:
         "--shared-env",
         type=Path,
         metavar="PATH",
-        help="use this shared environment instead of one of your own (teaching rooms)",
+        help="use this shared environment instead of one of your own (default: "
+        "the teaching room's, when the release names one and it is here)",
+    )
+    p_init.add_argument(
+        "--own-env",
+        action="store_true",
+        help="an environment of your own, even where a shared one is available",
     )
     add_common(
         p_init,
@@ -405,6 +416,17 @@ def add_course_parser(groups) -> None:
         "(notebooks), new (theirs next to yours), replace (yours kept aside), keep",
     )
     p_update.set_defaults(func=cmd_course_update)
+
+    p_lab = sub.add_parser(
+        "lab", help="JupyterLab, from the folder's environment (shared or its own)"
+    )
+    p_lab.add_argument("directory", nargs="?", type=Path, default=Path("."))
+    p_lab.add_argument(
+        "lab_args",
+        nargs=argparse.REMAINDER,
+        help="passed to `jupyter lab` (default: the notebooks/ directory)",
+    )
+    p_lab.set_defaults(func=cmd_course_lab)
 
     p_status = sub.add_parser("status", help="the folder's release, and your changes")
     p_status.add_argument("directory", nargs="?", type=Path, default=Path("."))
