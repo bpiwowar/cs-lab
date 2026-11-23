@@ -304,7 +304,114 @@ def build_parser() -> argparse.ArgumentParser:
         help="Python file holding the RESOURCES mapping",
     )
     p_check.set_defaults(func=cmd_check)
+
+    add_course_parser(groups)
     return parser
+
+
+def _course(args: argparse.Namespace):
+    from .course.commands import Course, interactive_ask
+
+    return Course(ask=None if getattr(args, "no_input", False) else interactive_ask())
+
+
+def cmd_course_init(args: argparse.Namespace) -> int:
+    return _course(args).init(
+        args.url,
+        args.directory,
+        shared_env=args.shared_env,
+        on_conflict=args.on_conflict or "",
+        sync=not args.no_sync,
+    )
+
+
+def cmd_course_update(args: argparse.Namespace) -> int:
+    return _course(args).update(
+        args.directory,
+        on_conflict=args.on_conflict or "",
+        dry_run=args.dry_run,
+        reset_env=args.reset_env,
+        sync=not args.no_sync,
+    )
+
+
+def cmd_course_status(args: argparse.Namespace) -> int:
+    return _course(args).status(args.directory, offline=args.offline)
+
+
+def add_course_parser(groups) -> None:
+    from .course.folder import CHOICES
+
+    course = groups.add_parser(
+        "course",
+        help="a course's practicals in a folder of yours, kept up to date",
+        description=(
+            "Set a folder up from a course's release (the release.json next to "
+            "its zip), and update it to later releases without losing your "
+            "work: files you did not touch are replaced, and for a file both "
+            "you and the course changed, you choose."
+        ),
+    )
+    sub = course.add_subparsers(dest="command", required=True)
+
+    def add_common(p: argparse.ArgumentParser, conflict_help: str) -> None:
+        p.add_argument(
+            "--on-conflict",
+            choices=CHOICES,
+            help=conflict_help,
+        )
+        p.add_argument(
+            "--no-sync", action="store_true", help="do not run `uv sync` afterwards"
+        )
+        p.add_argument(
+            "--no-input",
+            action="store_true",
+            help="never ask: use --on-conflict, the folder's default, or `new`",
+        )
+
+    p_init = sub.add_parser("init", help="set a folder up from a release")
+    p_init.add_argument(
+        "url", help="the course's release (release.json, or its directory)"
+    )
+    p_init.add_argument(
+        "directory", nargs="?", type=Path, help="default: the course's name"
+    )
+    p_init.add_argument(
+        "--shared-env",
+        type=Path,
+        metavar="PATH",
+        help="use this shared environment instead of one of your own (teaching rooms)",
+    )
+    add_common(
+        p_init,
+        "the default for later updates, when a file changed on both sides "
+        "(stored in .course/config.toml)",
+    )
+    p_init.set_defaults(func=cmd_course_init)
+
+    p_update = sub.add_parser("update", help="update a folder to the latest release")
+    p_update.add_argument("directory", nargs="?", type=Path, default=Path("."))
+    p_update.add_argument(
+        "--dry-run", action="store_true", help="say what would change, change nothing"
+    )
+    p_update.add_argument(
+        "--reset-env",
+        action="store_true",
+        help="take the course's environment as is, dropping your own packages",
+    )
+    add_common(
+        p_update,
+        "what to do with every file both you and the course changed: merge "
+        "(notebooks), new (theirs next to yours), replace (yours kept aside), keep",
+    )
+    p_update.set_defaults(func=cmd_course_update)
+
+    p_status = sub.add_parser("status", help="the folder's release, and your changes")
+    p_status.add_argument("directory", nargs="?", type=Path, default=Path("."))
+    p_status.add_argument(
+        "--offline", action="store_true", help="do not look for a newer release"
+    )
+    p_status.set_defaults(func=cmd_course_status)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -318,7 +425,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.getLogger("cs_lab").setLevel(
         logging.DEBUG if args.verbose else logging.INFO
     )
-    return args.func(args)
+    try:
+        return args.func(args)
+    except _course_errors() as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+def _course_errors() -> Tuple[type, ...]:
+    from .course import CourseError, FolderError, ReleaseError
+
+    return (CourseError, FolderError, ReleaseError)
 
 
 if __name__ == "__main__":  # pragma: no cover

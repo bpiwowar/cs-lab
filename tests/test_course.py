@@ -1,0 +1,457 @@
+"""Tests for `cs-lab course`: releases, the three-way plan, conflicts, env."""
+
+import hashlib
+import json
+import shutil
+import subprocess
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from cs_lab.course import Chooser, Course, Folder, Release, ReleaseError, notebooks
+from cs_lab.course import env as course_env
+from cs_lab.course.plan import ADD, CONFLICT, DELETE, UPDATE, classify
+
+
+def nb(*cells):
+    """A minimal notebook; each cell is ("code"|"markdown", source)."""
+    return json.dumps(
+        {
+            "cells": [
+                {
+                    "cell_type": kind,
+                    "id": f"c{i}",
+                    "metadata": {},
+                    "source": source,
+                    **(
+                        {"outputs": [], "execution_count": None}
+                        if kind == "code"
+                        else {}
+                    ),
+                }
+                for i, (kind, source) in enumerate(cells)
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        },
+        indent=1,
+    )
+
+
+def pyproject(*deps):
+    listed = ",\n".join(f'    "{d}"' for d in deps)
+    return (
+        f'[project]\nname = "tp"\nversion = "0.1.0"\nrequires-python = ">=3.11"\n'
+        f"dependencies = [\n{listed},\n]\n\n[tool.uv]\npackage = false\n"
+    )
+
+
+V1 = {
+    "README.md": "# TP\n",
+    "pyproject.toml": pyproject("six"),
+    "uv.lock": "version = 1\n# v1\n",
+    "notebooks/a.ipynb": nb(
+        ("markdown", "# Attention\nThis practicle shows attention."),
+        ("code", "x = 1"),
+        ("code", "# Exercise\n# hint: y = x * ?\nassert False"),
+        ("code", "print(x)"),
+    ),
+    "notebooks/b.ipynb": nb(("markdown", "# B"), ("code", "b = 1")),
+    "notebooks/old.ipynb": nb(("code", "old = 1")),
+}
+
+
+def v2():
+    files = dict(V1)
+    files["notebooks/a.ipynb"] = nb(
+        ("markdown", "# Attention\nThis practical shows attention."),
+        ("code", "x = 2"),
+        ("code", "# Exercise\n# hint: y = x * 3\nassert False"),
+        ("code", "print(x)"),
+    )
+    files["notebooks/b.ipynb"] = nb(("markdown", "# B"), ("code", "b = 10"))
+    files["notebooks/c.ipynb"] = nb(("code", "c = 1"))
+    files["pyproject.toml"] = pyproject("six", "attrs")
+    files["uv.lock"] = "version = 1\n# v2\n"
+    del files["notebooks/old.ipynb"]
+    return files
+
+
+def publish(site: Path, files: dict, name: str = "tp-test") -> str:
+    """Write a release (zip + release.json) into ``site``; return its URL."""
+    site.mkdir(parents=True, exist_ok=True)
+    bundle = site / "tp.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        for path, content in sorted(files.items()):
+            archive.writestr(path, content)
+    hashes = {
+        path: "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+        for path, content in sorted(files.items())
+    }
+    listing = "".join(f"{p}\0{h}\n" for p, h in hashes.items())
+    release = {
+        "format": 1,
+        "name": name,
+        "id": hashlib.sha256(listing.encode()).hexdigest()[:16],
+        "created": "2026-11-22T00:00:00Z",
+        "bundle": {
+            "path": "tp.zip",
+            "sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(),
+        },
+        "env": [p for p in ("pyproject.toml", "uv.lock") if p in files],
+        "files": hashes,
+    }
+    if "uv.lock" in hashes:
+        release["lock"] = hashes["uv.lock"]
+    (site / "release.json").write_text(json.dumps(release))
+    return site.as_uri()
+
+
+def cells(path: Path):
+    return ["".join(c["source"]) for c in json.loads(path.read_text())["cells"]]
+
+
+def student_edits(folder: Path):
+    """Fill the exercise of a.ipynb, add a note, and run it (outputs)."""
+    path = folder / "notebooks" / "a.ipynb"
+    data = json.loads(path.read_text())
+    data["cells"][2]["source"] = "# Exercise\n# hint: y = x * ?\ny = x * 3"
+    for cell in data["cells"]:
+        if cell["cell_type"] == "code":
+            cell["outputs"] = [
+                {"output_type": "stream", "name": "stdout", "text": "out\n"}
+            ]
+    data["cells"].insert(
+        3, {"cell_type": "markdown", "id": "mine", "metadata": {}, "source": "my note"}
+    )
+    path.write_text(json.dumps(data, indent=1))
+
+
+@pytest.fixture
+def course():
+    lines = []
+    return Course(show=lines.append), lines
+
+
+@pytest.fixture
+def site(tmp_path):
+    return tmp_path / "site"
+
+
+def setup_folder(tmp_path, site, course_obj, **kwargs):
+    url = publish(site, V1)
+    folder = tmp_path / "work"
+    assert course_obj.init(url, folder, sync=False, **kwargs) == 0
+    return folder
+
+
+# ---- the plan --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "base,local,new,kind",
+    [
+        ("b", "b", "b", None),  # nothing changed
+        ("b", "l", "b", None),  # only the student changed it
+        ("b", "b", "n", UPDATE),  # only the course changed it
+        ("b", "n", "n", None),  # both made the same change
+        (None, None, "n", ADD),  # a new file
+        ("b", "b", None, DELETE),  # the course dropped an untouched file
+        ("b", "l", "n", CONFLICT),
+        ("b", None, "n", CONFLICT),  # the student deleted it, the course changed it
+        (None, "l", "n", CONFLICT),  # no base: a folder not set up by cs-lab
+    ],
+)
+def test_classify(base, local, new, kind):
+    action = classify("f", base, local, new)
+    assert (action.kind if action else None) == kind
+
+
+# ---- init / update ----------------------------------------------------------
+
+
+def test_init_installs_the_release_and_records_it(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    assert (folder / "notebooks" / "a.ipynb").read_text() == V1["notebooks/a.ipynb"]
+    assert (folder / "pyproject.toml").is_file()
+    state = Folder(folder)
+    config = state.load()
+    assert config.name == "tp-test" and config.mode == "own" and config.release
+    assert sorted(state.base_files()) == sorted(V1)
+    assert (folder / ".course" / ".gitignore").read_text() == "base/\n"
+
+
+def test_update_takes_what_the_student_did_not_touch(tmp_path, site, course):
+    course_obj, lines = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    (folder / "README.md").write_text("my readme\n")  # course did not change it
+    publish(site, v2())
+
+    assert course_obj.update(folder, on_conflict="keep", sync=False) == 0
+    assert (folder / "notebooks" / "b.ipynb").read_text() == v2()["notebooks/b.ipynb"]
+    assert (folder / "notebooks" / "c.ipynb").is_file()  # new practical
+    assert not (folder / "notebooks" / "old.ipynb").exists()  # dropped, untouched
+    assert (folder / "README.md").read_text() == "my readme\n"  # theirs
+    assert Folder(folder).load().release == Release.fetch(site.as_uri()).id
+
+    lines.clear()
+    assert course_obj.update(folder, sync=False) == 0
+    assert any("Up to date" in line for line in lines)
+
+
+def test_a_dropped_file_the_student_changed_is_kept(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    (folder / "notebooks" / "old.ipynb").write_text(nb(("code", "mine")))
+    publish(site, v2())
+    course_obj.update(folder, sync=False)
+    assert "mine" in cells(folder / "notebooks" / "old.ipynb")
+
+
+def test_dry_run_changes_nothing(tmp_path, site, course):
+    course_obj, lines = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    before = Folder(folder).load().release
+    publish(site, v2())
+    course_obj.update(folder, dry_run=True, sync=False)
+    assert not (folder / "notebooks" / "c.ipynb").exists()
+    assert Folder(folder).load().release == before
+    assert any("notebooks/c.ipynb" in line for line in lines)
+
+
+# ---- conflicts --------------------------------------------------------------
+
+
+def test_new_leaves_theirs_and_writes_the_course_version_next_to_it(
+    tmp_path, site, course
+):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    mine = (folder / "notebooks" / "a.ipynb").read_text()
+    publish(site, v2())
+
+    course_obj.update(folder, on_conflict="new", sync=False)
+    assert (folder / "notebooks" / "a.ipynb").read_text() == mine
+    assert (folder / "notebooks" / "a.new.ipynb").read_text() == v2()[
+        "notebooks/a.ipynb"
+    ]
+
+
+def test_replace_keeps_theirs_aside(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    mine = (folder / "notebooks" / "a.ipynb").read_text()
+    publish(site, v2())
+
+    course_obj.update(folder, on_conflict="replace", sync=False)
+    assert (folder / "notebooks" / "a.ipynb").read_text() == v2()["notebooks/a.ipynb"]
+    (aside,) = (folder / "notebooks").glob("a.mine-*.ipynb")
+    assert aside.read_text() == mine
+
+
+def test_keep_changes_nothing_but_moves_the_base(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    mine = (folder / "notebooks" / "a.ipynb").read_text()
+    publish(site, v2())
+    course_obj.update(folder, on_conflict="keep", sync=False)
+    assert (folder / "notebooks" / "a.ipynb").read_text() == mine
+    base = Folder(folder).base / "notebooks" / "a.ipynb"
+    assert base.read_text() == v2()["notebooks/a.ipynb"]
+
+
+needs_nbdime = pytest.mark.skipif(not notebooks.can_merge(), reason="no nbdime, no uvx")
+
+
+@needs_nbdime
+def test_merge_brings_the_fixes_into_the_students_notebook(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    publish(site, v2())
+
+    course_obj.update(folder, on_conflict="merge", sync=False)
+    merged = cells(folder / "notebooks" / "a.ipynb")
+    assert merged[0] == "# Attention\nThis practical shows attention."  # typo fixed
+    assert merged[1] == "x = 2"
+    assert "y = x * 3" in merged[2]  # their answer stays
+    assert "my note" in merged
+    assert (folder / "notebooks" / "a.mine.ipynb").is_file()
+    assert not (folder / "notebooks" / "a.new.ipynb").exists()
+
+
+@needs_nbdime
+def test_a_course_cell_the_merge_loses_is_kept_in_a_new_copy(tmp_path, site, course):
+    course_obj, lines = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    path = folder / "notebooks" / "b.ipynb"
+    path.write_text(
+        nb(("markdown", "# B"), ("code", "z = 'student'"), ("code", "b = 1"))
+    )
+    files = v2()
+    files["notebooks/b.ipynb"] = nb(
+        ("markdown", "# B"), ("code", "z = 'teacher'"), ("code", "b = 10")
+    )
+    publish(site, files)
+
+    course_obj.update(folder, on_conflict="merge", sync=False)
+    if "z = 'teacher'" not in cells(path):
+        assert (folder / "notebooks" / "b.new.ipynb").is_file()
+        assert any("could not be placed" in line for line in lines)
+
+
+def test_merge_is_only_offered_for_notebooks_with_a_base(tmp_path):
+    action = classify("README.md", "b", "l", "n")
+    assert Chooser("merge").choose(action, tmp_path, tmp_path) == "new"
+
+
+def test_a_capital_answer_applies_to_the_rest(tmp_path, site):
+    asked = []
+
+    def ask(prompt):
+        asked.append(prompt)
+        return "K"
+
+    shown = []
+    course_obj = Course(show=shown.append, ask=ask)
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    (folder / "notebooks" / "b.ipynb").write_text(nb(("code", "mine")))
+    publish(site, v2())
+
+    course_obj.update(folder, sync=False)
+    assert len(asked) == 1  # asked for the first conflict only
+    assert "mine" in cells(folder / "notebooks" / "b.ipynb")
+
+
+def test_without_a_terminal_the_default_is_new(tmp_path, site, course):
+    course_obj, _ = course  # no ask
+    folder = setup_folder(tmp_path, site, course_obj)
+    student_edits(folder)
+    publish(site, v2())
+    course_obj.update(folder, sync=False)
+    assert (folder / "notebooks" / "a.new.ipynb").is_file()
+
+
+def test_the_folder_default_is_used(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj, on_conflict="replace")
+    student_edits(folder)
+    publish(site, v2())
+    course_obj.update(folder, sync=False)
+    assert list((folder / "notebooks").glob("a.mine-*.ipynb"))
+
+
+# ---- the environment ---------------------------------------------------------
+
+
+def test_dependency_changes(tmp_path):
+    base, local = tmp_path / "base.toml", tmp_path / "local.toml"
+    base.write_text(pyproject("six", "numpy"))
+    local.write_text(pyproject("six", "requests>=2", "torch"))
+    changes = course_env.student_changes(base, local)
+    assert changes.added == ["requests>=2", "torch"]
+    assert changes.removed == ["numpy"]
+
+
+def test_the_students_packages_are_added_again(tmp_path, site, course, monkeypatch):
+    calls = []
+
+    def fake_uv(args, cwd):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(course_env, "_uv", fake_uv)
+    monkeypatch.setattr(course_env.shutil, "which", lambda name: "/usr/bin/" + name)
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    (folder / "pyproject.toml").write_text(pyproject("six", "requests"))
+    (folder / "uv.lock").write_text("version = 1\n# mine\n")
+    publish(site, v2())
+
+    course_obj.update(folder, sync=False)
+    assert (folder / "uv.lock").read_text() == v2()["uv.lock"]  # the course's lock
+    assert course_env.dependencies(folder / "pyproject.toml") == ["six", "attrs"]
+    assert calls == [["add", "--no-sync", "requests"]]
+    assert course_env.dependencies(folder / "pyproject.mine.toml") == [
+        "six",
+        "requests",
+    ]
+
+
+def test_untouched_environment_is_simply_replaced(tmp_path, site, course, monkeypatch):
+    monkeypatch.setattr(course_env, "_uv", lambda *a: pytest.fail("uv called"))
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    publish(site, v2())
+    course_obj.update(folder, sync=False)
+    assert (folder / "pyproject.toml").read_text() == v2()["pyproject.toml"]
+    assert not (folder / "pyproject.mine.toml").exists()
+
+
+def test_shared_mode_leaves_the_environment_out(tmp_path, site, course):
+    course_obj, lines = course
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "uv.lock").write_text("version = 1\n# v1\n")
+    folder = setup_folder(tmp_path, site, course_obj, shared_env=shared)
+    assert not (folder / "pyproject.toml").exists()
+    assert Folder(folder).load().mode == "shared"
+
+    publish(site, v2())  # a new lock the shared env was not built from
+    course_obj.update(folder, sync=False)
+    assert not (folder / "uv.lock").exists()
+    assert any("shared environment was built for another" in line for line in lines)
+
+
+# ---- safety ----------------------------------------------------------------
+
+
+def test_a_tampered_bundle_is_refused(tmp_path, site):
+    url = publish(site, V1)
+    release = Release.fetch(url)
+    with zipfile.ZipFile(site / "tp.zip", "a") as archive:
+        archive.writestr("extra.txt", "x")
+    with pytest.raises(ReleaseError):
+        release.download(tmp_path / "out")
+
+
+def test_another_course_at_the_same_url_is_refused(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    publish(site, v2(), name="another")
+    with pytest.raises(Exception, match="another"):
+        course_obj.update(folder, sync=False)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_a_git_folder_gets_a_commit_before_and_after(tmp_path, site, course):
+    course_obj, _ = course
+    folder = setup_folder(tmp_path, site, course_obj)
+    git = ["git", "-C", str(folder)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    student_edits(folder)
+    publish(site, v2())
+    course_obj.update(folder, on_conflict="new", sync=False)
+    log = subprocess.run(
+        [*git, "log", "--format=%s"], capture_output=True, text=True
+    ).stdout
+    assert log.splitlines() == [
+        "cs-lab: course release " + Folder(folder).load().release,
+        "cs-lab: my work, before the course update",
+    ]
+
+
+@pytest.mark.parametrize("form", ["dir", "json"])
+def test_release_url_local_path(tmp_path, form):
+    from cs_lab.course.release import release_url
+
+    folder = tmp_path / "a@b"
+    url = release_url(str(folder if form == "dir" else folder / "release.json"))
+    assert url == (folder / "release.json").as_uri()

@@ -14,9 +14,12 @@ has to answer three questions, and `cs-lab` answers one each:
 
 They are one package because a notebook asks all three in the same breath
 (`hardware(Profile)`, then `load_hf_model(Profile.pick(...), dtype=hw.dtype)`)
-and because a student installs them together. It has **no required
+and because a student installs them together. It has **no heavy
 dependency**: `torch`, `transformers`, `datasets`, `pyterrier` and
 `datamaestro` are imported only by the functions that use them.
+
+It also keeps a student's copy of the practicals up to date:
+[`cs-lab course`](#a-folder-that-follows-the-course).
 
 Building the notebooks themselves is a separate concern, and a separate
 package:
@@ -334,3 +337,51 @@ CS_LAB_CACHE_PATH=/shared/cache CS_LAB_CACHE_ENFORCE=1 python practical1.py
 ```
 
 fails at the first resource that would have gone to the Hub.
+
+## A folder that follows the course
+
+A course built with jupytext-notebook-helper publishes, next to its zip, a
+`release.json` listing every file with its hash. `cs-lab course` turns that
+into a folder a student can work in and still update:
+
+```sh
+uvx cs-lab course init https://example.org/course/practical/  # -> ./<course name>
+cd <course name>
+uvx cs-lab course update          # later, whenever the course says so
+uvx cs-lab course status          # the release you have, what you changed
+```
+
+An update compares three versions of each file — the release the student was
+given (kept in `.course/base/`), their copy, and the new release:
+
+| | |
+|---|---|
+| the course did not change it | the student's copy stays as it is |
+| the student did not touch it | replaced (added, or removed when the course dropped it) |
+| both changed it | **the student chooses**, below |
+
+| Choice | |
+|---|---|
+| `merge` | notebooks: a cell-by-cell merge ([nbdime](https://nbdime.readthedocs.io)), the student's side winning where both changed the same lines; their copy is kept as `name.mine.ipynb`. A cell of the course that could not be placed also leaves the course's version as `name.new.ipynb` |
+| `new` | the student's file stays; the course's is put next to it, `name.new.ipynb` |
+| `replace` | the course's version; the student's is kept as `name.mine-<date>.ipynb` |
+| `keep` | nothing |
+
+In a terminal it asks for each file (a capital letter answers for all the
+rest, `d` shows a diff); `--on-conflict` answers once for all, and so does
+`on_conflict` in `.course/config.toml`. Without a terminal or a choice, `new`:
+it never touches the student's file. `--dry-run` says what would happen.
+
+The environment is not merged as text — a text merge of `uv.lock` is a file uv
+refuses. The course's `pyproject.toml` and `uv.lock` are taken, and the
+dependencies the student added (or removed) are replayed with `uv add` /
+`uv remove`, so uv keeps every version the course pinned and resolves only
+theirs; then `uv sync`. `--reset-env` takes the course's environment as is.
+
+In a teaching room, `--shared-env PATH` uses an environment the teacher built
+instead: the folder then has no environment files, and an update warns when
+the shared environment was built from another release's lock (it keeps a copy
+as `PATH/uv.lock`). If the folder is a git repository, an update commits the
+student's work before, and the new release after.
+
+`merge` needs nbdime: `cs-lab[course]`, or `uvx` fetches it.
