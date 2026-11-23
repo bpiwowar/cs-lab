@@ -171,7 +171,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
     for section in sorted(scanned):
         print(f"{section}:")
         for resource in sorted(scanned[section], key=lambda r: (r.kind, r.key)):
-            note = "  (bypasses cs_lab)" if resource.bypass else ""
+            note = ""
+            if resource.bypass:
+                module = "datasets" if resource.kind == "dataset" else "transformers"
+                note = f"  (bypasses cs_lab: import it from cs_lab.{module})"
             print(f"  - {resource}{note}")
     return 0
 

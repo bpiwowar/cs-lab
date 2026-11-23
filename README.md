@@ -13,7 +13,8 @@ has to answer three questions, and `cs-lab` answers one each:
 | Where do the weights come from? | [the loaders](#supported-libraries) — a shared cache, the Hub on a miss | `CS_LAB_CACHE_PATH` |
 
 They are one package because a notebook asks all three in the same breath
-(`hardware(Profile)`, then `load_hf_model(Profile.pick(...), dtype=hw.dtype)`)
+(`hardware(Profile)`, then
+`AutoModelForCausalLM.from_pretrained(Profile.pick(...), dtype=hw.dtype)`)
 and because a student installs them together. It has **no heavy
 dependency**: `torch`, `transformers`, `datasets`, `pyterrier` and
 `datamaestro` are imported only by the functions that use them.
@@ -40,8 +41,9 @@ quota, shaky proxy, offline lab). The usual answer is a shared read-only
 directory pre-filled by the instructor. `cs-lab` makes that directory a
 first-class thing:
 
-- notebook code calls `load_hf_model("gpt2")` and gets the cached copy when it
-  exists, the Hub otherwise, with a one-line note saying which;
+- notebook code imports `transformers` and `datasets` from `cs_lab` instead —
+  `from cs_lab.transformers import AutoModel` — and
+  `AutoModel.from_pretrained("gpt2")` gets the cached copy when it exists, the Hub otherwise, with a one-line note saying which;
 - the instructor declares the resources once, and `cs-lab cache download` fills
   the cache (each shared resource once, optional ones on demand);
 - an *enforce* mode turns any cache miss into an error, so you can check that
@@ -56,15 +58,40 @@ pip install "cs-lab[hf]"      # + transformers, datasets
 
 ## Supported libraries
 
-| Library                | cs-lab function                | Equivalent to                                   | Cached under `$CS_LAB_CACHE_PATH`        | Pre-download with              |
-|------------------------|------------------------------------|-------------------------------------------------|----------------------------------------|--------------------------------|
-| transformers           | `load_hf_model(id, cls=AutoModel, **kw)`        | `cls.from_pretrained(id, **kw)`        | `huggingface/models/<id>/`             | `make_hf_model_resource`       |
-| transformers           | `load_hf_tokenizer(id, cls=AutoTokenizer, **kw)`| `cls.from_pretrained(id, **kw)`        | `huggingface/tokenizers/<id>/`         | `make_hf_tokenizer_resource`   |
-| transformers           | `load_hf_processor(id, cls=AutoProcessor, **kw)`| `cls.from_pretrained(id, **kw)`        | `huggingface/processors/<id>/`         | `make_hf_processor_resource`   |
-| datasets               | `load_hf_dataset(id, name=None, split=None, **kw)` | `datasets.load_dataset(id, name, split=split, **kw)` | `huggingface/datasets/<id>[-<name>]/<split>/` | `make_hf_dataset_resource` |
-| transformers           | `HFModel(id, tok_cls, model_cls, **kw)`         | lazy `.tokenizer` / `.model` via the two loaders above | as above                    | model + tokenizer resources    |
-| pyterrier / ir-datasets| (use `pt.get_dataset` directly)                 | `pt.get_dataset(id)`                   | pyterrier's own home (`PYTERRIER_HOME`, `IR_DATASETS_HOME`) | `make_pyterrier_dataset_resource` |
-| datamaestro            | (use `datamaestro.prepare_dataset` directly)    | `prepare_dataset(id)`                  | datamaestro's own store (`DATAMAESTRO_DIR`) | `make_datamaestro_resource` |
+`cs_lab.transformers` and `cs_lab.datasets` are drop-in replacements for
+`transformers` and `datasets`: same names, same arguments, the same objects
+returned.
+
+| Library                | Load with                                         | Cached under `$CS_LAB_CACHE_PATH`        | Pre-download with              |
+|------------------------|---------------------------------------------------|----------------------------------------|--------------------------------|
+| transformers           | `cs_lab.transformers.<AnyModel>.from_pretrained(id, **kw)` | `huggingface/models/<id>/`    | `make_hf_model_resource`       |
+| transformers           | `cs_lab.transformers.<AnyTokenizer>.from_pretrained(id, **kw)` | `huggingface/tokenizers/<id>/` | `make_hf_tokenizer_resource` |
+| transformers           | `cs_lab.transformers.<AnyProcessor>.from_pretrained(id, **kw)` (image processors, feature extractors too) | `huggingface/processors/<id>/` | `make_hf_processor_resource` |
+| transformers           | `cs_lab.transformers.<AnyConfig>.from_pretrained(id)` | the model's folder                 | (comes with the model)         |
+| datasets               | `cs_lab.datasets.load_dataset(id, name=None, split=None, **kw)` | `huggingface/datasets/<id>[-<name>]/<split>/` | `make_hf_dataset_resource` |
+| pyterrier / ir-datasets| (use `pt.get_dataset` directly)                   | pyterrier's own home (`PYTERRIER_HOME`, `IR_DATASETS_HOME`) | `make_pyterrier_dataset_resource` |
+| datamaestro            | (use `datamaestro.prepare_dataset` directly)      | datamaestro's own store (`DATAMAESTRO_DIR`) | `make_datamaestro_resource` |
+
+Every other name of the two modules (`pipeline`, `TrainingArguments`,
+`Dataset`…) is the library's own. A class from `cs_lab.transformers` is a
+subclass of the `transformers` one, of the same name, whose `from_pretrained`
+reads the cache and then calls the `transformers` one: what comes back is a
+plain `GPT2LMHeadModel`, so `save_pretrained`, `peft` and `isinstance` against
+`transformers` classes behave as usual (a class of your own deriving from it
+keeps the cache, and gets instances of itself). A local folder is loaded as
+given. `cs_lab.datasets.load_dataset` goes straight to `datasets` for local
+files, packaged builders (`"csv"`, `"json"`…), `data_files` / `data_dir`,
+`streaming` and a `revision`.
+
+The functions these are built on are still there, and kept for existing code:
+
+| cs-lab function                                  | Same as                                 |
+|--------------------------------------------------|-----------------------------------------|
+| `load_hf_model(id, cls=AutoModel, **kw)`         | `cls.from_pretrained(id, **kw)`         |
+| `load_hf_tokenizer(id, cls=AutoTokenizer, **kw)` | `cls.from_pretrained(id, **kw)`         |
+| `load_hf_processor(id, cls=AutoProcessor, **kw)` | `cls.from_pretrained(id, **kw)`         |
+| `load_hf_dataset(id, name=None, split=None, **kw)` | `load_dataset(id, name, split=split, **kw)` |
+| `HFModel(id, tok_cls, model_cls, **kw)`          | lazy `.tokenizer` / `.model`, loaded on first access |
 
 The loaders differ from their equivalents in one way only: with
 `CS_LAB_CACHE_PATH` set, they first look for the resource in the cache layout
@@ -78,22 +105,18 @@ one go, and you keep calling those libraries as usual.
 ## In notebooks
 
 ```python
-from cs_lab import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
-from transformers import AutoModelForCausalLM
+from cs_lab.transformers import AutoModelForCausalLM, AutoTokenizer
+from cs_lab.datasets import load_dataset
 
-tokenizer = load_hf_tokenizer("HuggingFaceTB/SmolLM2-1.7B-Instruct")
-model = load_hf_model(
-    "HuggingFaceTB/SmolLM2-1.7B-Instruct", AutoModelForCausalLM, device_map="auto"
-)
-train = load_hf_dataset("imdb", split="train")
-sst2 = load_hf_dataset("glue", name="sst2")  # DatasetDict of the cached splits
-
-hf = HFModel("gpt2")  # lazy: nothing is loaded yet
-hf.tokenizer, hf.model  # AutoTokenizer / AutoModel, loaded on first access
+MODEL = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(MODEL)
+model = AutoModelForCausalLM.from_pretrained(MODEL, device_map="auto")
+train = load_dataset("imdb", split="train")
+sst2 = load_dataset("glue", "sst2")  # DatasetDict of the cached splits
 ```
 
-Each loader checks the local cache first, then falls back to the Hub with a
-warning. Extra keyword arguments go to `from_pretrained` / `load_dataset`.
+Each load checks the local cache first, then falls back to the Hub with a
+warning. Going back to plain HuggingFace is a matter of the import lines.
 
 ## Configuration
 
@@ -116,8 +139,9 @@ A directory is used only when it contains the marker `.downloaded.ok`, written
 after a successful download, so a half-copied model is never picked up.
 
 **Without `CS_LAB_CACHE_PATH`, `cs-lab` adds no caching of its own.**
-`load_hf_model("gpt2", cls, **kw)` is then exactly `cls.from_pretrained("gpt2", **kw)`,
-and `load_hf_dataset(...)` exactly `datasets.load_dataset(...)`: the usual
+`cs_lab.transformers.X.from_pretrained(...)` is then exactly
+`transformers.X.from_pretrained(...)`, and `cs_lab.datasets.load_dataset(...)`
+exactly `datasets.load_dataset(...)`: the usual
 HuggingFace cache (`~/.cache/huggingface`, `HF_HOME`) applies as it always does,
 and `cs-lab cache download` merely warms it. Notebooks can therefore import from
 `cs_lab` unconditionally and run unchanged on a laptop or on Colab; only the
@@ -253,7 +277,7 @@ from cs_lab import hardware
 from mycourse.profiles import Profile
 
 hw = hardware(Profile)        # in a notebook: also shows the profile chooser
-model = load_hf_model(MODEL, AutoModelForCausalLM, dtype=hw.dtype).to(hw.device)
+model = AutoModelForCausalLM.from_pretrained(MODEL, dtype=hw.dtype).to(hw.device)
 
 if hw.has_vllm:               # the library imports *and* the backend supports it
     ...
@@ -307,16 +331,19 @@ which is what `--section` takes. Both commands accept files or directories
 `--search-path DIR` lets an imported helper module be scanned as part of the
 file that imports it — for course code split between a notebook and a library.
 
-What the scan understands: `load_hf_model` / `load_hf_tokenizer` /
+What the scan understands: `X.from_pretrained` and `load_dataset` on names
+imported from `cs_lab.transformers` / `cs_lab.datasets` (`from … import X`,
+`import cs_lab.transformers as T`), `load_hf_model` / `load_hf_tokenizer` /
 `load_hf_processor` / `load_hf_dataset` / `HFModel` / `pt.get_dataset` /
 `prepare_dataset`, with module-level string constants resolved
-(`MODEL = "gpt2"` … `load_hf_model(MODEL, …)`). A constant rebound under a
+(`MODEL = "gpt2"` … `AutoModel.from_pretrained(MODEL)`). A configuration
+(`AutoConfig`, `GenerationConfig`) comes with its model, and is not reported. A constant rebound under a
 guard — `if test_mode:` by default, `--guard NAME` for another one — becomes an
 `optional=True` resource, since a small stand-in used while testing has no
 business filling a classroom cache. A profile ladder (below) says the same
-thing in one expression and is read the same way. Plain `load_dataset` and
-`Class.from_pretrained` calls are reported as *bypasses*: they do not go through
-the cache, so `check` never asks for them to be declared.
+thing in one expression and is read the same way. The same calls on
+`transformers` / `datasets` themselves are reported as *bypasses*: they do not go
+through the cache, so `check` never asks for them to be declared.
 
 `check` reports as **errors** anything loaded but not declared, or declared but
 never loaded, and as **warnings** a class or `optional` mismatch. Descriptions

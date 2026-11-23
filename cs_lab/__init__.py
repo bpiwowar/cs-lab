@@ -16,15 +16,19 @@ selected with ``NOTEBOOK_PROFILE`` or from the in-notebook chooser::
 ``vLLM`` actually work here (:func:`hardware`, see :mod:`cs_lab.machine`)::
 
     hw = hardware(Profile)              # also shows the chooser, in a notebook
-    model = load_hf_model(Profile.pick(...), AutoModelForCausalLM, dtype=hw.dtype)
+    model = AutoModelForCausalLM.from_pretrained(Profile.pick(...), dtype=hw.dtype)
     model.to(hw.device)
 
 *Where the weights come from* — a shared local cache, falling back to the Hub,
 so thirty laptops in a room do not each download the same model.
 
-Notebook side::
+Notebook side, drop-in replacements for ``transformers`` and ``datasets``::
 
-    from cs_lab import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
+    from cs_lab.transformers import AutoModelForCausalLM, AutoTokenizer
+    from cs_lab.datasets import load_dataset
+
+(``load_hf_model``, ``load_hf_tokenizer``, ``load_hf_dataset``, ``HFModel``:
+the functions these are built on, kept for existing code.)
 
 Course side (declare what to pre-download)::
 

@@ -4,11 +4,13 @@
 code it describes. This module closes that gap by parsing both sides and
 comparing them:
 
-- **the sources** — every ``load_hf_model`` / ``load_hf_tokenizer`` /
-  ``load_hf_processor`` / ``load_hf_dataset`` / ``HFModel`` /
-  ``pt.get_dataset`` call, with module-level string constants resolved
-  (``MODEL_NAME = "gpt2"`` … ``load_hf_model(MODEL_NAME, …)``). Plain
-  ``load_dataset`` / ``Class.from_pretrained`` calls are collected too, but as
+- **the sources** — every ``Class.from_pretrained`` / ``load_dataset`` call
+  on a name imported from :mod:`cs_lab.transformers` / :mod:`cs_lab.datasets`,
+  every ``load_hf_model`` / ``load_hf_tokenizer`` / ``load_hf_processor`` /
+  ``load_hf_dataset`` / ``HFModel`` / ``pt.get_dataset`` call, with
+  module-level string constants resolved (``MODEL_NAME = "gpt2"`` …
+  ``AutoModel.from_pretrained(MODEL_NAME)``). The same calls on
+  ``transformers`` / ``datasets`` themselves are collected too, but as
   *bypasses*: they do not go through the cache, so they are reported and never
   compared;
 - **the declaration** — the ``{section: [resource, …]}`` mapping of a Python
@@ -366,8 +368,11 @@ def _func_name(node: ast.expr) -> str:
     return ""
 
 
-def _kind_of_class(class_name: str) -> str:
-    """Guess what a ``Class.from_pretrained`` call loads, from the class name."""
+def _kind_of_class(class_name: str) -> Optional[str]:
+    """Guess what a ``Class.from_pretrained`` call loads, from the class name
+    (``None`` for a configuration, which comes with its model)."""
+    if "Config" in class_name:
+        return None
     if "Tokenizer" in class_name:
         return "tokenizer"
     if "Processor" in class_name or "FeatureExtractor" in class_name:
@@ -380,9 +385,60 @@ def _kind_of_class(class_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: The drop-in modules, whose loads go through the cache.
+CACHED_MODULES = ("cs_lab.transformers", "cs_lab.datasets")
+
+
+@dataclass
+class _CachedNames:
+    """Names bound to :mod:`cs_lab.transformers` / :mod:`cs_lab.datasets`."""
+
+    #: local name -> imported name (``from cs_lab.transformers import X as Y``)
+    names: Dict[str, str] = field(default_factory=dict)
+    #: dotted names of the modules (``T`` for ``import cs_lab.transformers as T``)
+    modules: set = field(default_factory=set)
+
+    def resolve(self, node: Optional[ast.expr]) -> Optional[str]:
+        """The cs-lab name ``node`` stands for, if it is one."""
+        if isinstance(node, ast.Name):
+            return self.names.get(node.id)
+        if isinstance(node, ast.Attribute) and _dotted(node.value) in self.modules:
+            return node.attr
+        return None
+
+
+def _dotted(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted(node.value)}.{node.attr}"
+    return ""
+
+
+def _cached_names(tree: ast.AST) -> _CachedNames:
+    found = _CachedNames()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0:
+            if node.module in CACHED_MODULES:
+                for alias in node.names:
+                    found.names[alias.asname or alias.name] = alias.name
+            elif node.module == "cs_lab":
+                for alias in node.names:
+                    if f"cs_lab.{alias.name}" in CACHED_MODULES:
+                        found.modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in CACHED_MODULES:
+                    found.modules.add(alias.asname or alias.name)
+    return found
+
+
 class _Scanner(ast.NodeVisitor):
-    def __init__(self, constants: _Constants) -> None:
+    def __init__(
+        self, constants: _Constants, cached: Optional[_CachedNames] = None
+    ) -> None:
         self.constants = constants
+        self.cached = cached or _CachedNames()
         self.resources: List[ScannedResource] = []
         self.imports: List[str] = []
 
@@ -400,7 +456,8 @@ class _Scanner(ast.NodeVisitor):
         elif name == "load_hf_dataset":
             self._dataset(node)
         elif name == "load_dataset":
-            self._dataset(node, bypass=True)
+            cached = self.cached.resolve(node.func) == "load_dataset"
+            self._dataset(node, bypass=not cached)
         elif name == "get_dataset":
             self._pyterrier(node)
         elif name == "from_pretrained":
@@ -441,15 +498,17 @@ class _Scanner(ast.NodeVisitor):
         """``AutoModelForSequenceClassification.from_pretrained("gpt2")``."""
         if not node.args or not isinstance(node.func, ast.Attribute):
             return
-        cls = _class_name(node.func.value)
+        cached = self.cached.resolve(node.func.value)
+        cls = cached or _class_name(node.func.value)
         if cls is None or not cls[:1].isupper():
             return  # `model.from_pretrained` / an instance: not a class
+        kind = _kind_of_class(cls)
+        if kind is None:
+            return
         for value, optional in self.constants.resolve(node.args[0]):
             if isinstance(value, str):
                 self._add(
-                    ScannedResource(
-                        _kind_of_class(cls), value, cls, optional, bypass=True
-                    )
+                    ScannedResource(kind, value, cls, optional, bypass=cached is None)
                 )
 
     def _dataset(self, node: ast.Call, bypass: bool = False) -> None:
@@ -510,7 +569,7 @@ def scan_file(
     """
     tree = _parse(path)
     constants = _collect_constants(tree, guards, ladders=ladders)
-    scanner = _Scanner(constants)
+    scanner = _Scanner(constants, _cached_names(tree))
     scanner.visit(tree)
     return scanner.resources, scanner.imports
 

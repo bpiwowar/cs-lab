@@ -1,6 +1,16 @@
 """HuggingFace models, tokenizers, processors and datasets, cache first.
 
-Loading (in notebooks)::
+Loading (in notebooks): :mod:`cs_lab.transformers` and :mod:`cs_lab.datasets`
+are drop-in replacements for ``transformers`` and ``datasets``::
+
+    from cs_lab.transformers import AutoTokenizer, GPT2LMHeadModel
+    from cs_lab.datasets import load_dataset
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    model = GPT2LMHeadModel.from_pretrained("gpt2")
+    dataset = load_dataset("imdb", split="train")
+
+The same, with the functions they are built on (kept for existing code)::
 
     from cs_lab import load_hf_model, load_hf_tokenizer, load_hf_dataset, HFModel
 
@@ -31,6 +41,7 @@ in enforce mode. ``transformers`` and ``datasets`` are imported lazily.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, List, Optional, Type
 
 from .config import (
@@ -68,14 +79,27 @@ def _log_loaded(resource_type: str, resource_id: str, source: str) -> None:
         pass
 
 
-def _load_pretrained(
-    resource_type: str, subdir: str, model_id: str, cls: Type, kwargs: dict
+def _is_local(model_id: Any) -> bool:
+    """A folder (or any path object) rather than a Hub identifier: loaded as
+    given, the cache has nothing to do with it."""
+    return not isinstance(model_id, str) or os.path.isdir(model_id)
+
+
+def load_pretrained(
+    resource_type: str, subdir: str, cls: Type, model_id: Any, *args, **kwargs
 ) -> Any:
-    """Shared logic for models / tokenizers / processors."""
+    """``cls.from_pretrained(model_id, *args, **kwargs)``, from the local cache
+    when it holds ``<subdir>/<model_id>``.
+
+    On a miss, the Hub (with a warning, or :class:`CacheMissError` in enforce
+    mode), downloading into the shared cache when there is one.
+    """
+    if _is_local(model_id):
+        return cls.from_pretrained(model_id, *args, **kwargs)
     cache_path = get_cache_path()
     local_path = get_resource_path(PROVIDER, subdir, model_id)
     if local_path is not None and is_download_complete(local_path):
-        result = cls.from_pretrained(str(local_path), **kwargs)
+        result = cls.from_pretrained(str(local_path), *args, **kwargs)
         _log_loaded(resource_type, model_id, "local cache")
         return result
 
@@ -83,9 +107,15 @@ def _load_pretrained(
     if cache_path is not None:
         # Keep the fallback download inside the shared cache
         kwargs.setdefault("cache_dir", get_hf_cache_dir())
-    result = cls.from_pretrained(model_id, **kwargs)
+    result = cls.from_pretrained(model_id, *args, **kwargs)
     _log_loaded(resource_type, model_id, "HuggingFace Hub")
     return result
+
+
+def _load_pretrained(
+    resource_type: str, subdir: str, model_id: str, cls: Type, kwargs: dict
+) -> Any:
+    return load_pretrained(resource_type, subdir, cls, model_id, **kwargs)
 
 
 def load_hf_model(model_id: str, model_class: Optional[Type] = None, **kwargs) -> Any:

@@ -235,3 +235,43 @@ def test_cli_scan_emit_is_valid_python(course, capsys):
 def test_cli_scan_unknown_section(course):
     with pytest.raises(SystemExit):
         main(["cache", "scan", str(course / "sources"), "--emit", "nope"])
+
+
+# --------------------------------------------------------------------------- #
+# The drop-in modules
+# --------------------------------------------------------------------------- #
+
+DROPIN = """
+from cs_lab.transformers import AutoModelForCausalLM, AutoTokenizer as Tok
+from cs_lab.transformers import AutoConfig
+from cs_lab.datasets import load_dataset
+import cs_lab.transformers as T
+from cs_lab import transformers
+import transformers as plain
+import datasets
+
+MODEL = "big/model"
+tokenizer = Tok.from_pretrained(MODEL)
+model = AutoModelForCausalLM.from_pretrained(MODEL, dtype="auto")
+config = AutoConfig.from_pretrained(MODEL)
+other = T.AutoModel.from_pretrained("other/model")
+clip = transformers.CLIPProcessor.from_pretrained("clip/model")
+data = load_dataset("some/corpus", "cfg", split="train")
+reward = plain.AutoModelForSequenceClassification.from_pretrained("bypassed/model")
+raw = datasets.load_dataset("bypassed/data")
+"""
+
+
+def test_dropin_loads_go_through_the_cache(tmp_path):
+    (tmp_path / "dropin.py").write_text(DROPIN)
+    found = {(r.kind, r.key): r for r in scan_paths([tmp_path / "dropin.py"])["dropin"]}
+    assert not found[("tokenizer", "big/model")].bypass
+    assert found[("tokenizer", "big/model")].cls == "AutoTokenizer"
+    assert found[("model", "big/model")].cls == "AutoModelForCausalLM"
+    assert not found[("model", "big/model")].bypass
+    assert not found[("model", "other/model")].bypass
+    assert not found[("processor", "clip/model")].bypass
+    assert not found[("dataset", "some/corpus[cfg]")].bypass
+    assert found[("model", "bypassed/model")].bypass
+    assert found[("dataset", "bypassed/data")].bypass
+    assert len(found) == 7  # the configuration comes with its model
