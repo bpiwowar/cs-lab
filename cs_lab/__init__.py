@@ -61,6 +61,7 @@ from .config import (
     is_enforce_mode,
 )
 from .datamaestro import make_datamaestro_resource
+from .envinfo import Environment, environment
 from .hf import (
     HFModel,
     load_hf_dataset,
@@ -118,6 +119,9 @@ __all__ = [
     "hardware",
     "add_state_note",
     "is_notebook",
+    # what the notebook runs in
+    "Environment",
+    "environment",
     # loading
     "HFModel",
     "load_hf_dataset",

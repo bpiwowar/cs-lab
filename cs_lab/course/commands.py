@@ -30,6 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
+from ..envinfo import for_folder
 from . import env as course_env
 from . import notebooks
 from .folder import CHOICES, Config, Folder, FolderError, free_sibling, sibling
@@ -315,6 +316,12 @@ class Course:
         self.show(f"  from    {config.url}")
         mode = config.mode + (f" ({config.shared_env})" if config.shared_env else "")
         self.show(f"  env     {mode}")
+        here, note = for_folder(folder.root)
+        if note is None:
+            self.show(f"  python  {here.python_line()}")
+            self.show(f"  cache   {here.cache_line()}")
+        else:
+            self.show(f"  python  ({note.split(':')[0]})")
         changed = [
             path
             for path, digest in folder.base_files().items()
@@ -325,7 +332,9 @@ class Course:
             )
         ]
         self.show(
-            f"  yours   {len(changed)} file(s) changed since: " + ", ".join(changed)
+            f"  yours   {len(changed)} file(s) changed: " + ", ".join(changed)
+            if changed
+            else "  yours   no changes"
         )
         if not offline:
             try:

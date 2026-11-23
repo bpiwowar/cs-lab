@@ -118,6 +118,31 @@ sst2 = load_dataset("glue", "sst2")  # DatasetDict of the cached splits
 Each load checks the local cache first, then falls back to the Hub with a
 warning. Going back to plain HuggingFace is a matter of the import lines.
 
+Each load says where it came from (the cache folder, or the Hub and where it
+was kept), and the note `hardware()` shows in a notebook says which Python
+the kernel runs — the room's shared environment, your own on top of it, a
+venv — and which cache it reads.
+
+## Which environment, which cache
+
+```console
+$ uvx cs-lab env
+Python    3.12.16  /…/envs/llm-mind/e301e589a7f15a24/bin/python
+          the room's shared environment (llm-mind, `current`, lock e301e589a7f15a24)
+Course    llm-mind, release 89f987c14cf42add (~/tp-llm, shared environment)
+Cache     /…/cache/llm-mind (fallback to the Hub on a miss)
+          12 models, 10 tokenizers, 1 processor, 9 dataset splits
+HF hub    ~/.cache/huggingface (what is not in the cache above)
+```
+
+In a course folder, `cs-lab env` describes the environment its notebooks run
+in — the room's shared one, or the folder's `.venv` — rather than the Python
+`cs-lab` itself runs on (a throwaway one under `uvx`): it asks that
+interpreter, with a few lines of standard library, so any cs-lab version there
+will do. Elsewhere, or with `--python PATH`, it describes that Python.
+`cs-lab course status` says the same in two lines; in code,
+`cs_lab.environment()`.
+
 ## Configuration
 
 | Variable             | Effect                                                                 |
@@ -377,6 +402,7 @@ cd <course name>
 uvx cs-lab course lab             # JupyterLab, from the folder's environment
 uvx cs-lab course update          # later, whenever the course says so
 uvx cs-lab course status          # the release you have, what you changed
+uvx cs-lab env                    # which Python and cache the notebooks use
 ```
 
 An update compares three versions of each file — the release the student was

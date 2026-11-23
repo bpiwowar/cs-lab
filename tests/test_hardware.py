@@ -169,6 +169,8 @@ def no_state_notes(monkeypatch):
     """Start from no registered note: importing jupytext-notebook-helper in the
     same interpreter would otherwise add its own."""
     monkeypatch.setattr(hw_module, "_state_notes", [])
+    # Which Python and cache this is depends on the machine: one test below.
+    monkeypatch.setattr(hw_module, "_environment_note", lambda: "")
 
 
 class _FakeWidget:
@@ -277,3 +279,14 @@ def test_hardware_falls_back_to_a_print_without_ipython_display(
     hardware(Profile, refresh=True)
 
     assert "Profile: SMALL" in capsys.readouterr().out
+
+
+def test_the_note_says_which_python_and_cache(monkeypatch, fake_notebook):
+    displayed = []
+    _install_fake_ipywidgets(monkeypatch, displayed)
+    monkeypatch.setenv(ENV_BACKEND, "cpu")
+    monkeypatch.setattr(hw_module, "_environment_note", lambda: "Environment: E")
+
+    hardware(_ladder(), refresh=True)
+
+    assert displayed[-1] == ("HTML", "<i>Profile: SMALL · Environment: E</i>")

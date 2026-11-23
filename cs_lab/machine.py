@@ -262,6 +262,17 @@ def add_state_note(note: Callable[[], Optional[str]]) -> None:
         _state_notes.append(note)
 
 
+def _environment_note() -> str:
+    """Which Python, which cache — never an error (see cs_lab.envinfo)."""
+    try:
+        from .envinfo import summary
+
+        return summary()
+    except Exception as error:  # noqa: BLE001 - a note must never stop a run
+        logger.debug("cannot describe the environment: %s", error)
+        return ""
+
+
 def _report_profile_state(profiles: Any) -> None:
     """In a notebook, show the active rung — and whatever else was registered.
 
@@ -278,7 +289,7 @@ def _report_profile_state(profiles: Any) -> None:
     active = profiles.current()
     description = (profiles.describe(active) or "").strip()
     label = f"{active.name} — {description}" if description else active.name
-    parts = [f"Profile: {label}"]
+    parts = [f"Profile: {label}", _environment_note()]
     for note in _state_notes:
         try:
             said = note()
@@ -287,7 +298,7 @@ def _report_profile_state(profiles: Any) -> None:
             continue
         if said:
             parts.append(said)
-    text = " · ".join(parts)
+    text = " · ".join(part for part in parts if part)
     try:
         from IPython.display import HTML, display
 

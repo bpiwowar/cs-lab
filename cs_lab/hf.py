@@ -79,6 +79,11 @@ def _log_loaded(resource_type: str, resource_id: str, source: str) -> None:
         pass
 
 
+def _hub(kwargs: dict) -> str:
+    where = kwargs.get("cache_dir")
+    return f"HuggingFace Hub (kept in {where})" if where else "HuggingFace Hub"
+
+
 def _is_local(model_id: Any) -> bool:
     """A folder (or any path object) rather than a Hub identifier: loaded as
     given, the cache has nothing to do with it."""
@@ -100,7 +105,7 @@ def load_pretrained(
     local_path = get_resource_path(PROVIDER, subdir, model_id)
     if local_path is not None and is_download_complete(local_path):
         result = cls.from_pretrained(str(local_path), *args, **kwargs)
-        _log_loaded(resource_type, model_id, "local cache")
+        _log_loaded(resource_type, model_id, f"local cache ({local_path})")
         return result
 
     warn_cache_miss(resource_type.capitalize(), model_id, cache_path)
@@ -108,7 +113,7 @@ def load_pretrained(
         # Keep the fallback download inside the shared cache
         kwargs.setdefault("cache_dir", get_hf_cache_dir())
     result = cls.from_pretrained(model_id, *args, **kwargs)
-    _log_loaded(resource_type, model_id, "HuggingFace Hub")
+    _log_loaded(resource_type, model_id, _hub(kwargs))
     return result
 
 
@@ -184,7 +189,7 @@ def load_hf_dataset(
             split_path = local_base / split
             if is_download_complete(split_path):
                 result = load_from_disk(str(split_path))
-                _log_loaded("dataset", dataset_id, "local cache")
+                _log_loaded("dataset", dataset_id, f"local cache ({split_path})")
                 return result
         else:
             splits = {
@@ -193,14 +198,14 @@ def load_hf_dataset(
                 if p.is_dir() and is_download_complete(p)
             }
             if splits:
-                _log_loaded("dataset", dataset_id, "local cache")
+                _log_loaded("dataset", dataset_id, f"local cache ({local_base})")
                 return DatasetDict(splits)
 
     warn_cache_miss("Dataset", dataset_id, cache_path)
     if cache_path is not None:
         kwargs.setdefault("cache_dir", get_hf_cache_dir())
     result = load_dataset(dataset_id, name, split=split, **kwargs)
-    _log_loaded("dataset", dataset_id, "HuggingFace Hub")
+    _log_loaded("dataset", dataset_id, _hub(kwargs))
     return result
 
 

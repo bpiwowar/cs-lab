@@ -94,6 +94,20 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_env(args: argparse.Namespace) -> int:
+    from .envinfo import ProbeError, for_folder
+
+    try:
+        described, note = for_folder(args.directory, args.python)
+    except ProbeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if note:
+        print(f"({note})")
+    print(described)
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     for spec, resources in _load_all(args.resources):
         print(f"{spec}:")
@@ -215,6 +229,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     groups = parser.add_subparsers(dest="group", required=True)
+
+    p_env = groups.add_parser(
+        "env",
+        help="what this Python is (the room's shared environment, yours…), "
+        "the course folder, and where models and datasets come from",
+    )
+    p_env.add_argument(
+        "directory",
+        nargs="?",
+        type=Path,
+        default=None,
+        help="where to look for the course folder (default: here)",
+    )
+    p_env.add_argument(
+        "--python",
+        type=Path,
+        help="describe this interpreter instead of the course folder's",
+    )
+    p_env.set_defaults(func=cmd_env)
 
     # Everything here is about the resource cache, and says so: the package
     # covers more than that now (a profile ladder, hardware detection), and a
