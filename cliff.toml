@@ -17,11 +17,11 @@ body = """
     {% for commit in commits
         | filter(attribute="scope")
         | sort(attribute="scope") %}
-        - **{{ commit.scope }}**: {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/experimaestro/experimaestro-python/commit/{{ commit.id }}))
+        - **{{ commit.scope }}**: {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/bpiwowar/cs-lab/commit/{{ commit.id }}))
     {%- endfor -%}
     {% for commit in commits %}
         {%- if not commit.scope -%}
-        - {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/experimaestro/experimaestro-python/commit/{{ commit.id }}))
+        - {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/bpiwowar/cs-lab/commit/{{ commit.id }}))
         {% endif -%}
     {%- endfor -%}
 {% endfor %}
@@ -34,7 +34,7 @@ conventional_commits = true
 filter_unconventional = false
 split_commits = false
 commit_preprocessors = [
-    { pattern = "#(\\d+)", replace = "[#$1](https://github.com/experimaestro/experimaestro-python/issues/$1)" },
+    { pattern = "#(\\d+)", replace = "[#$1](https://github.com/bpiwowar/cs-lab/issues/$1)" },
 ]
 commit_parsers = [
     { message = "^feat", group = "Features" },
