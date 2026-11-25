@@ -18,6 +18,18 @@ can be written from them (``scan --emit``) and kept honest (``check``)::
     cs-lab cache scan  sources/
     cs-lab cache scan  sources/ --emit 02-generation
     cs-lab cache check sources/ --declaration mycourse/resources.py
+
+Revisions (see :mod:`cs_lab.revisions`): ``lock`` pins each resource at a
+commit hash, ``download --lock`` fetches those, ``--register`` records the
+lock in the cache; ``usage`` then tells which lock uses what, and ``gc``
+removes what none uses. The cache is ``--cache DIR``, or CS_LAB_CACHE_PATH::
+
+    cs-lab cache lock --from src/mycourse/resources.py -o resources.lock
+    cs-lab cache download --from src/mycourse/resources.py \\
+        --lock resources.lock --register mycourse
+    cs-lab cache usage --cache /shared/cache
+    cs-lab cache gc --cache /shared/cache          # what would go; --yes to do it
+    cs-lab cache migrate --cache /shared/cache --adopt
 """
 
 from __future__ import annotations
@@ -26,6 +38,7 @@ import argparse
 import importlib
 import importlib.util
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -89,6 +102,21 @@ def _load_all(specs: Sequence[str]) -> List[Tuple[str, Resources]]:
     return [(spec, load_resources(spec)) for spec in specs]
 
 
+def _use_cache(args: argparse.Namespace) -> None:
+    """``--cache DIR`` stands for CS_LAB_CACHE_PATH, for this process."""
+    if getattr(args, "cache", None):
+        os.environ[config.ENV_PATH] = str(args.cache)
+
+
+def _root(args: argparse.Namespace) -> Path:
+    root = config.get_cache_path()
+    if root is None:
+        raise SystemExit(f"no cache: give --cache DIR, or set {config.ENV_PATH}")
+    if not root.is_dir():
+        raise SystemExit(f"no such directory: {root}")
+    return root
+
+
 def cmd_info(args: argparse.Namespace) -> int:
     print(config.describe())
     return 0
@@ -129,6 +157,12 @@ def cmd_download(args: argparse.Namespace) -> int:
     else:
         print(f"Cache location: {root}")
 
+    if args.lock:
+        config.set_lock(args.lock)
+        print(f"Revisions from {args.lock}")
+    elif args.register:
+        raise SystemExit("--register needs --lock")
+
     failed: List[Tuple[str, object, Exception]] = []
     with config.hub_online():
         for spec, resources in _load_all(args.resources):
@@ -150,12 +184,147 @@ def cmd_download(args: argparse.Namespace) -> int:
                 failed.append((spec, None, sys.exc_info()[1]))
                 logging.exception("%s: download failed", spec)
 
+    if args.register and root is not None:
+        from .revisions import register
+
+        print(f"Lock registered as {register(root, args.register, args.lock)}")
+
     if failed:
         print(f"\n{len(failed)} resource(s) could not be downloaded:")
         for section_name, resource, exc in failed:
             name = getattr(resource, "key", section_name)
             print(f"  - {section_name}/{name}: {exc}")
         return 1
+    return 0
+
+
+def cmd_lock(args: argparse.Namespace) -> int:
+    from .revisions import lock
+
+    output = Path(args.output)
+    previous = config.read_lock(output) if output.exists() else {}
+    resources: Resources = {}
+    for _, group in _load_all(args.resources):
+        for section, items in group.items():
+            resources.setdefault(section, []).extend(items)
+    with config.hub_online():
+        locked = lock(resources, previous, args.upgrade)
+    config.write_lock(output, locked)
+    changed = [
+        key
+        for key in locked
+        if previous.get(key, {}).get("revision") != locked[key]["revision"]
+    ]
+    gone = sorted(set(previous) - set(locked))
+    print(f"{output}: {len(locked)} entries, {len(changed)} new or changed", end="")
+    print(f", {len(gone)} removed" if gone else "")
+    for key in changed:
+        print(f"  {key} @ {locked[key]['revision'][:12]}")
+    return 0
+
+
+def _short(revision: str) -> str:
+    return revision[:12] if config.is_sha(revision) else revision
+
+
+def _size(path: Path) -> str:
+    total = 0
+    for dirpath, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += (Path(dirpath) / name).stat().st_size
+            except OSError:
+                pass
+    for unit in ("B", "K", "M", "G"):
+        if total < 1024:
+            return f"{total:.0f}{unit}"
+        total /= 1024
+    return f"{total:.1f}T"
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    from .revisions import registered, usage
+
+    root = _root(args)
+    locks = registered(root)
+    print(f"Cache {root}")
+    print(f"Registered locks ({root / config.LOCKS_DIR}):")
+    for name in locks or ["(none)"]:
+        print(f"  {name}")
+    uses, missing = usage(root)
+    print("Revisions:")
+    for use in uses:
+        if args.unused and use.used:
+            continue
+        holders = use.locks + [f"ref:{ref}" for ref in use.refs]
+        size = f"  {_size(use.path)}" if args.size else ""
+        print(
+            f"  {use.entry.key} @ {_short(use.revision)}{size}  "
+            f"{', '.join(holders) if holders else 'UNUSED'}"
+        )
+    if missing:
+        print("Locked but not in the cache:")
+        for name, key, sha in missing:
+            print(f"  {key} @ {sha[:12]}  ({name})")
+    return 0
+
+
+def cmd_gc(args: argparse.Namespace) -> int:
+    from .revisions import garbage, registered, remove
+
+    root = _root(args)
+    if not registered(root) and not args.force:
+        raise SystemExit(
+            f"no lock registered in {root / config.LOCKS_DIR}: every locked "
+            "revision would count as unused (--force to go on anyway)"
+        )
+    unused = garbage(root, legacy=args.legacy)
+    if not unused:
+        print("Nothing to remove")
+        return 0
+    for use in unused:
+        size = f"  {_size(use.path)}" if args.size else ""
+        verb = "removing" if args.yes else "would remove"
+        print(f"{verb} {use.entry.key} @ {_short(use.revision)}{size}")
+        if args.yes:
+            remove(use)
+    if not args.yes:
+        print("(dry run: --yes to remove)")
+    return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from .revisions import adopt, migrate, registered
+
+    root = _root(args)
+    for key in migrate(root):
+        print(f"{key}: moved to {config.LEGACY}/")
+    if args.adopt or args.lock:
+        locked: dict = {}
+        for path in args.lock or []:
+            locked.update(config.read_lock(path))
+        if not args.lock:
+            for entries in registered(root).values():
+                locked.update(entries)
+        with config.hub_online():
+            for key, outcome in adopt(root, locked):
+                print(f"{key}: {outcome}")
+    return 0
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    from .revisions import register
+
+    print(register(_root(args), args.name, args.lock))
+    return 0
+
+
+def cmd_unregister(args: argparse.Namespace) -> int:
+    path = _root(args) / config.LOCKS_DIR / f"{args.name}.lock"
+    if not path.exists():
+        raise SystemExit(f"no lock {args.name!r} ({path})")
+    path.unlink()
+    print(f"removed {path}")
     return 0
 
 
@@ -261,7 +430,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = cache.add_subparsers(dest="command", required=True)
 
+    def add_cache(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--cache",
+            type=Path,
+            metavar="DIR",
+            help=f"the cache (default: ${config.ENV_PATH})",
+        )
+
     p_info = sub.add_parser("info", help="show the cache configuration")
+    add_cache(p_info)
     p_info.set_defaults(func=cmd_info)
 
     def add_from(p: argparse.ArgumentParser) -> None:
@@ -292,7 +470,91 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="continue with the next --from group when a download fails",
     )
+    p_dl.add_argument(
+        "--lock", type=Path, metavar="FILE", help="download the revisions it pins"
+    )
+    p_dl.add_argument(
+        "--register",
+        metavar="NAME",
+        help="record the lock in the cache as NAME (for usage / gc)",
+    )
+    add_cache(p_dl)
     p_dl.set_defaults(func=cmd_download)
+
+    p_lock = sub.add_parser(
+        "lock", help="pin each declared resource at a commit hash (needs the Hub)"
+    )
+    add_from(p_lock)
+    p_lock.add_argument(
+        "-o",
+        "--output",
+        default="resources.lock",
+        metavar="FILE",
+        help="the lock, updated in place (default: %(default)s)",
+    )
+    p_lock.add_argument(
+        "--upgrade",
+        nargs="*",
+        metavar="KEY",
+        help="re-resolve these entries (e.g. models/gpt2), or all when none given",
+    )
+    p_lock.set_defaults(func=cmd_lock)
+
+    p_usage = sub.add_parser(
+        "usage", help="each revision in the cache, and the locks using it"
+    )
+    add_cache(p_usage)
+    p_usage.add_argument("--unused", action="store_true", help="only unused ones")
+    p_usage.add_argument("--size", action="store_true", help="with sizes (slow)")
+    p_usage.set_defaults(func=cmd_usage)
+
+    p_gc = sub.add_parser(
+        "gc", help="remove the revisions no registered lock (or ref) uses"
+    )
+    add_cache(p_gc)
+    p_gc.add_argument("--yes", action="store_true", help="remove (default: list)")
+    p_gc.add_argument(
+        "--legacy",
+        action="store_true",
+        help="also content from before revisions were kept, when unused",
+    )
+    p_gc.add_argument("--size", action="store_true", help="with sizes (slow)")
+    p_gc.add_argument(
+        "--force", action="store_true", help="even with no lock registered"
+    )
+    p_gc.set_defaults(func=cmd_gc)
+
+    p_mig = sub.add_parser(
+        "migrate", help="move a cache from before revisions to the current layout"
+    )
+    add_cache(p_mig)
+    p_mig.add_argument(
+        "--adopt",
+        action="store_true",
+        help="rename legacy content to the hash the registered locks pin, when "
+        "the Hub's main was at it on download (needs the Hub)",
+    )
+    p_mig.add_argument(
+        "--lock",
+        type=Path,
+        action="append",
+        metavar="FILE",
+        help="adopt with this lock instead of the registered ones (repeatable)",
+    )
+    p_mig.set_defaults(func=cmd_migrate)
+
+    p_reg = sub.add_parser("register", help="record a lock in the cache")
+    add_cache(p_reg)
+    p_reg.add_argument("name")
+    p_reg.add_argument("lock", type=Path)
+    p_reg.set_defaults(func=cmd_register)
+
+    p_unreg = sub.add_parser(
+        "unregister", help="forget a lock: what only it used becomes garbage"
+    )
+    add_cache(p_unreg)
+    p_unreg.add_argument("name")
+    p_unreg.set_defaults(func=cmd_unregister)
 
     def add_scan(p: argparse.ArgumentParser) -> None:
         p.add_argument(
@@ -483,6 +745,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     logging.getLogger("cs_lab").setLevel(
         logging.DEBUG if args.verbose else logging.INFO
     )
+    _use_cache(args)
     try:
         return args.func(args)
     except _course_errors() as exc:

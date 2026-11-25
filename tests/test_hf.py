@@ -130,6 +130,16 @@ def test_hfmodel_is_lazy_and_cached():
 # Resource factories
 # --------------------------------------------------------------------------- #
 
+SHA = "a" * 40
+
+
+@pytest.fixture
+def hub():
+    """The Hub's ``main``, at SHA (no network)."""
+    with patch("cs_lab.hf.resolve_revision", return_value=SHA) as resolve:
+        yield resolve
+
+
 TRANSFORMERS_RESOURCES = [
     (make_hf_model_resource, "model", "models", "AutoModel"),
     (make_hf_tokenizer_resource, "tokenizer", "tokenizers", "AutoTokenizer"),
@@ -146,8 +156,10 @@ class TestPretrainedResources:
         assert make_fn("x", "Custom").description == "Custom"
         assert make_fn("x", optional=True).optional is True
 
-    def test_skips_when_cached(self, make_fn, kind, subdir, default_class, tmp_path):
-        _cached(tmp_path, "huggingface", subdir, "bert-base-uncased")
+    def test_skips_when_cached(
+        self, make_fn, kind, subdir, default_class, tmp_path, hub
+    ):
+        _cached(tmp_path, "huggingface", subdir, "bert-base-uncased", SHA)
         transformers = MagicMock()
         with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
             with patch.dict("sys.modules", {"transformers": transformers}):
@@ -155,17 +167,34 @@ class TestPretrainedResources:
         assert "Already exists" in result
         getattr(transformers, default_class).from_pretrained.assert_not_called()
 
-    def test_saves_into_cache(self, make_fn, kind, subdir, default_class, tmp_path):
+    def test_saves_into_cache(
+        self, make_fn, kind, subdir, default_class, tmp_path, hub
+    ):
         transformers = MagicMock()
         with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
             with patch.dict("sys.modules", {"transformers": transformers}):
                 result = make_fn("org/bert").download()
-        target = tmp_path / "huggingface" / subdir / "org-bert"
+        entry = tmp_path / "huggingface" / subdir / "org-bert"
+        target = entry / SHA
         assert "Saved" in result
         cls = getattr(transformers, default_class)
-        cls.from_pretrained.assert_called_once_with("org/bert")
+        cls.from_pretrained.assert_called_once_with("org/bert", revision=SHA)
         cls.from_pretrained.return_value.save_pretrained.assert_called_once_with(target)
         assert (target / ".downloaded.ok").exists()
+        assert (entry / "refs" / "main").read_text().strip() == SHA
+        hub.assert_called_once_with("org/bert", "model", None)
+
+    def test_declared_revision(
+        self, make_fn, kind, subdir, default_class, tmp_path, hub
+    ):
+        transformers = MagicMock()
+        with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
+            with patch.dict("sys.modules", {"transformers": transformers}):
+                make_fn("org/bert", revision="v1").download()
+        hub.assert_called_once_with("org/bert", "model", "v1")
+        entry = tmp_path / "huggingface" / subdir / "org-bert"
+        assert (entry / "refs" / "v1").read_text().strip() == SHA
+        assert not (entry / "refs" / "main").exists()
 
     def test_warms_hf_cache_without_root(self, make_fn, kind, subdir, default_class):
         transformers = MagicMock()
@@ -206,8 +235,8 @@ class TestDatasetResource:
         assert make_hf_dataset_resource("imdb", "train", "IMDB").description == "IMDB"
         assert make_hf_dataset_resource("imdb", "train", optional=True).optional
 
-    def test_skips_cached_split(self, tmp_path):
-        _cached(tmp_path, "huggingface", "datasets", "imdb", "train")
+    def test_skips_cached_split(self, tmp_path, hub):
+        _cached(tmp_path, "huggingface", "datasets", "imdb", SHA, "train")
         datasets = MagicMock()
         with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
             with patch.dict("sys.modules", {"datasets": datasets}):
@@ -215,15 +244,17 @@ class TestDatasetResource:
         assert "already exists" in result
         datasets.load_dataset.assert_not_called()
 
-    def test_saves_missing_splits(self, tmp_path):
-        _cached(tmp_path, "huggingface", "datasets", "imdb", "train")
+    def test_saves_missing_splits(self, tmp_path, hub):
+        _cached(tmp_path, "huggingface", "datasets", "imdb", SHA, "train")
         datasets = MagicMock()
         with patch.dict(os.environ, {ENV_PATH: str(tmp_path)}, clear=True):
             with patch.dict("sys.modules", {"datasets": datasets}):
                 result = make_hf_dataset_resource("imdb", ["train", "test"]).download()
         assert "train: already exists" in result and "test: saved" in result
-        datasets.load_dataset.assert_called_once_with("imdb", None, split="test")
-        test_dir = tmp_path / "huggingface" / "datasets" / "imdb" / "test"
+        datasets.load_dataset.assert_called_once_with(
+            "imdb", None, split="test", revision=SHA
+        )
+        test_dir = tmp_path / "huggingface" / "datasets" / "imdb" / SHA / "test"
         datasets.load_dataset.return_value.save_to_disk.assert_called_once_with(
             str(test_dir)
         )

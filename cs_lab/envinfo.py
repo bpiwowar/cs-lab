@@ -294,28 +294,27 @@ def _course(start: Path) -> Optional[Course]:
 
 
 def _cached(root: Path) -> Dict[str, int]:
-    """Complete entries under ``<root>/huggingface/<kind>/``; for datasets, splits."""
+    """Entries with a complete revision under ``<root>/huggingface/<kind>/``;
+    for datasets, their splits (any revision, former layout included)."""
+    from .revisions import entries
+
     counts: Dict[str, int] = {}
-    base = root / "huggingface"
-    for kind in ("models", "tokenizers", "processors"):
-        folder = base / kind
-        if folder.is_dir():
-            count = sum(
-                1 for entry in folder.iterdir() if (entry / ".downloaded.ok").exists()
-            )
-            if count:
-                counts[kind] = count
-    folder = base / "datasets"
-    if folder.is_dir():
-        count = sum(
-            1
-            for dataset in folder.iterdir()
-            if dataset.is_dir()
-            for split in dataset.iterdir()
-            if (split / ".downloaded.ok").exists()
-        )
+    for entry in entries(root):
+        if not entry.revisions:
+            continue
+        kind = entry.key.split("/", 1)[0]
+        if kind == "datasets":
+            splits = {
+                child.name
+                for path in entry.revisions.values()
+                for child in path.iterdir()
+                if child.is_dir() and (child / ".downloaded.ok").exists()
+            }
+            label, count = "dataset splits", len(splits)
+        else:
+            label, count = kind, 1
         if count:
-            counts["dataset splits"] = count
+            counts[label] = counts.get(label, 0) + count
     custom = root / "custom"
     if custom.is_dir():
         count = sum(1 for _ in custom.rglob(".downloaded.ok"))

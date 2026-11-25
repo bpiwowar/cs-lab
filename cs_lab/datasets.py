@@ -4,7 +4,7 @@
 
     from cs_lab.datasets import load_dataset
 
-    train = load_dataset("imdb", split="train")
+    train = load_dataset("stanfordnlp/imdb", split="train")
     sst2 = load_dataset("glue", "sst2")    # a DatasetDict of the cached splits
 
 :func:`load_dataset` takes the arguments of ``datasets.load_dataset``: a Hub
@@ -24,7 +24,8 @@ import datasets as _datasets
 from .hf import load_hf_dataset
 
 #: Arguments that make a load something other than a Hub dataset's splits.
-_NOT_FROM_HUB = ("data_dir", "data_files", "streaming", "revision")
+#: (``revision`` is not one: the cache keeps each revision apart.)
+_NOT_FROM_HUB = ("data_dir", "data_files", "streaming")
 
 
 def _from_hub(path: str, args: tuple, split: Any, kwargs: dict) -> bool:

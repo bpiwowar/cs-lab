@@ -64,11 +64,11 @@ returned.
 
 | Library                | Load with                                         | Cached under `$CS_LAB_CACHE_PATH`        | Pre-download with              |
 |------------------------|---------------------------------------------------|----------------------------------------|--------------------------------|
-| transformers           | `cs_lab.transformers.<AnyModel>.from_pretrained(id, **kw)` | `huggingface/models/<id>/`    | `make_hf_model_resource`       |
-| transformers           | `cs_lab.transformers.<AnyTokenizer>.from_pretrained(id, **kw)` | `huggingface/tokenizers/<id>/` | `make_hf_tokenizer_resource` |
-| transformers           | `cs_lab.transformers.<AnyProcessor>.from_pretrained(id, **kw)` (image processors, feature extractors too) | `huggingface/processors/<id>/` | `make_hf_processor_resource` |
+| transformers           | `cs_lab.transformers.<AnyModel>.from_pretrained(id, **kw)` | `huggingface/models/<id>/<sha>/`    | `make_hf_model_resource`       |
+| transformers           | `cs_lab.transformers.<AnyTokenizer>.from_pretrained(id, **kw)` | `huggingface/tokenizers/<id>/<sha>/` | `make_hf_tokenizer_resource` |
+| transformers           | `cs_lab.transformers.<AnyProcessor>.from_pretrained(id, **kw)` (image processors, feature extractors too) | `huggingface/processors/<id>/<sha>/` | `make_hf_processor_resource` |
 | transformers           | `cs_lab.transformers.<AnyConfig>.from_pretrained(id)` | the model's folder                 | (comes with the model)         |
-| datasets               | `cs_lab.datasets.load_dataset(id, name=None, split=None, **kw)` | `huggingface/datasets/<id>[-<name>]/<split>/` | `make_hf_dataset_resource` |
+| datasets               | `cs_lab.datasets.load_dataset(id, name=None, split=None, **kw)` | `huggingface/datasets/<id>[-<name>]/<sha>/<split>/` | `make_hf_dataset_resource` |
 | pyterrier / ir-datasets| (use `pt.get_dataset` directly)                   | pyterrier's own home (`PYTERRIER_HOME`, `IR_DATASETS_HOME`) | `make_pyterrier_dataset_resource` |
 | datamaestro            | (use `datamaestro.prepare_dataset` directly)      | datamaestro's own store (`DATAMAESTRO_DIR`) | `make_datamaestro_resource` |
 
@@ -111,7 +111,7 @@ from cs_lab.datasets import load_dataset
 MODEL = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(MODEL)
 model = AutoModelForCausalLM.from_pretrained(MODEL, device_map="auto")
-train = load_dataset("imdb", split="train")
+train = load_dataset("stanfordnlp/imdb", split="train")
 sst2 = load_dataset("glue", "sst2")  # DatasetDict of the cached splits
 ```
 
@@ -149,19 +149,29 @@ will do. Elsewhere, or with `--python PATH`, it describes that Python.
 |----------------------|------------------------------------------------------------------------|
 | `CS_LAB_CACHE_PATH`    | Root of the shared cache. Unset: the library does nothing (see below). |
 | `CS_LAB_CACHE_ENFORCE` | If set (any value), a cache miss raises `CacheMissError` instead of falling back. |
+| `CS_LAB_CACHE_LOCK`    | A resource lock (`cs-lab cache lock`): the revision each resource is read at when the code names none. |
 
 Layout under the root (`org/name` becomes `org-name`):
 
 ```
-$CS_LAB_CACHE_PATH/huggingface/models/<id>/                 model.save_pretrained()
-$CS_LAB_CACHE_PATH/huggingface/tokenizers/<id>/
-$CS_LAB_CACHE_PATH/huggingface/processors/<id>/
-$CS_LAB_CACHE_PATH/huggingface/datasets/<id>[-<name>]/<split>/   dataset.save_to_disk()
+$CS_LAB_CACHE_PATH/huggingface/models/<id>/<sha>/           model.save_pretrained()
+$CS_LAB_CACHE_PATH/huggingface/tokenizers/<id>/<sha>/
+$CS_LAB_CACHE_PATH/huggingface/processors/<id>/<sha>/
+$CS_LAB_CACHE_PATH/huggingface/datasets/<id>[-<name>]/<sha>/<split>/   dataset.save_to_disk()
+$CS_LAB_CACHE_PATH/huggingface/<kind>/<id>/refs/main        the hash main was at, when downloaded
 $CS_LAB_CACHE_PATH/huggingface/                             HF cache_dir used for fallbacks
+$CS_LAB_CACHE_PATH/locks/<name>.lock                        the locks of the courses using it
 ```
 
 A directory is used only when it contains the marker `.downloaded.ok`, written
 after a successful download, so a half-copied model is never picked up.
+
+Each revision (`<sha>`, the Hub's commit hash) has its own directory, so that
+courses sharing a cache can each read the one they were written for. A loader
+reads the `revision=` it is given, or else the one the lock in
+`CS_LAB_CACHE_LOCK` pins, or else the one `main` was last downloaded at (see
+[Revisions](#revisions-locks-and-cleaning-up)). A cache from before revisions
+(`<id>/` itself complete) is still read; `cs-lab cache migrate` moves it.
 
 **Without `CS_LAB_CACHE_PATH`, `cs-lab` adds no caching of its own.**
 `cs_lab.transformers.X.from_pretrained(...)` is then exactly
@@ -191,7 +201,7 @@ RESOURCES = {
     "practical1": [
         make_hf_model_resource("gpt2", model_class="GPT2LMHeadModel"),
         make_hf_tokenizer_resource("gpt2", tokenizer_class="GPT2Tokenizer"),
-        make_hf_dataset_resource("imdb", ["train", "test"]),
+        make_hf_dataset_resource("stanfordnlp/imdb", ["train", "test"]),
     ],
     "practical2": [
         make_hf_model_resource(
@@ -228,6 +238,9 @@ cs-lab cache list     --from src/mycourse/resources.py            # reads RESOUR
 cs-lab cache download --from src/mycourse/resources.py:get_resources
 ```
 
+Each `make_hf_*_resource` also takes `revision=` (a branch, tag or commit
+hash; `main` by default).
+
 `RESOURCES` above is only a naming convention. The option can be repeated. Resources are
 identified by `(type, key)`, so a model shared by several practicals is
 downloaded once. `HF_HUB_OFFLINE` is lifted for the duration of a download.
@@ -236,6 +249,52 @@ The same helpers are available from Python (`download_resources`,
 `select_resources`, `format_resources`, `merge_resources`), and any object with
 `resource_type`, `key`, `description`, `optional` and `download()` is a valid
 resource (`FunctionalResource` wraps a plain function).
+
+## Revisions: locks, and cleaning up
+
+A course pins its resources the way `uv.lock` pins its packages: `cs-lab cache
+lock` resolves each HuggingFace entry to a commit hash, in a file to commit
+next to the declaration; it keeps the existing pins, unless the revision a
+resource asks for changed or `--upgrade` (all, or the keys given) says
+otherwise. Downloading with `--lock` fetches exactly those revisions;
+`--register NAME` records the lock in the cache (`<root>/locks/NAME.lock`),
+which is how the cache knows who uses what:
+
+```sh
+cs-lab cache lock --from src/mycourse/resources.py -o resources.lock
+cs-lab cache lock --from src/mycourse/resources.py -o resources.lock --upgrade models/gpt2
+
+cs-lab cache download --from src/mycourse/resources.py \
+    --lock resources.lock --register mycourse-2026 --cache /shared/cache
+```
+
+To read back the locked revisions, notebooks run with `CS_LAB_CACHE_LOCK`
+pointing at the lock (a shared environment sets it, next to
+`CS_LAB_CACHE_PATH`).
+
+A cache shared by several courses then tells which lock holds which revision,
+and removes what none holds — nor a `refs/` file (`main` as last downloaded):
+
+```sh
+cs-lab cache usage --cache /shared/cache            # each revision and its users; --size, --unused
+cs-lab cache gc    --cache /shared/cache            # what would go
+cs-lab cache gc    --cache /shared/cache --yes      # remove it
+cs-lab cache unregister --cache /shared/cache mycourse-2025   # a course that ended
+```
+
+`--cache DIR` stands for `CS_LAB_CACHE_PATH` in every `cache` command. `gc`
+refuses to run on a cache with no lock registered, and leaves content from
+before revisions alone unless given `--legacy`.
+
+A cache from before revisions is moved with `migrate`: each entry goes to
+`<id>/legacy/`, still read when nothing pins a revision. `--adopt` then
+renames it to the hash a registered lock (or `--lock FILE`) pins, when the
+Hub's history shows `main` was at that commit on the day it was downloaded —
+no download again:
+
+```sh
+cs-lab cache migrate --cache /shared/cache --adopt
+```
 
 ## Compute profiles
 

@@ -5,7 +5,7 @@ a practical, ...) to a list of :class:`Resource` objects::
 
     RESOURCES = {
         "practical1": [make_hf_model_resource("gpt2"), make_hf_tokenizer_resource("gpt2")],
-        "practical2": [make_hf_dataset_resource("imdb", ["train", "test"])],
+        "practical2": [make_hf_dataset_resource("stanfordnlp/imdb", ["train", "test"])],
     }
 
 Two resources are the *same* when they share ``(resource_type, key)``; the
@@ -48,6 +48,10 @@ class Resource(ABC):
         """Optional resources are skipped unless explicitly requested."""
         return False
 
+    #: What ``cs-lab cache lock`` pins: dicts with the entry ``key``, the Hub
+    #: ``id`` and ``repo_type``, and the ``revision`` asked for (or None).
+    lock_entries: List[dict] = []
+
     @abstractmethod
     def download(self) -> str:
         """Fetch the resource into the cache; return a short status message."""
@@ -81,8 +85,10 @@ class FunctionalResource(Resource):
         description: str,
         download_fn: Callable[[], str],
         optional: bool = False,
+        lock_entries: Optional[List[dict]] = None,
     ) -> None:
         self._resource_type = resource_type
+        self.lock_entries = list(lock_entries or [])
         self._key = key
         self._description = description
         self._download_fn = download_fn
