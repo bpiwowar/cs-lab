@@ -120,8 +120,10 @@ them.
   one, so that the notebooks read the revisions the course pinned.
 
 A release from before `rooms` names one room with top-level `shared_env` /
-`shared_cache`, which is still read (and still written, for the first room,
-for cs-lab before 2.2).
+`shared_cache`, which is still read. A release with `rooms` is *format 2*:
+cs-lab before 2.2 refuses it — `uvx cs-lab@latest …` runs the current one —
+rather than read only its first room. (The build raises the format whenever a
+release relies on something older versions would get wrong.)
 
 ## Which environment, which cache
 

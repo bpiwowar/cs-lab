@@ -19,8 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional
 
-#: The release.json layouts this version reads.
-SUPPORTED_FORMAT = 1
+from .. import __version__
+
+#: The release.json layouts this version reads. A course's build raises the
+#: format when a release relies on something older versions would get wrong
+#: (2: `rooms`), so that they refuse it rather than misread it.
+SUPPORTED_FORMAT = 2
 
 
 class ReleaseError(Exception):
@@ -113,7 +117,8 @@ class Release:
         if data.get("format", 0) > SUPPORTED_FORMAT:
             raise ReleaseError(
                 f"{url} uses release format {data['format']}, newer than this "
-                "cs-lab reads: upgrade cs-lab"
+                f"cs-lab ({__version__}) reads: run it as `uvx cs-lab@latest ...`"
+                " (or upgrade cs-lab)"
             )
         try:
             return cls(

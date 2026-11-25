@@ -677,3 +677,13 @@ def test_release_url_local_path(tmp_path, form):
     folder = tmp_path / "a@b"
     url = release_url(str(folder if form == "dir" else folder / "release.json"))
     assert url == (folder / "release.json").as_uri()
+
+
+def test_a_release_format_newer_than_this_cs_lab_is_refused(tmp_path, site, course):
+    course_obj, _ = course
+    url = publish(site, V1)
+    release = json.loads((site / "release.json").read_text())
+    release["format"] = 99
+    (site / "release.json").write_text(json.dumps(release))
+    with pytest.raises(ReleaseError, match="cs-lab@latest"):
+        course_obj.init(url, tmp_path / "work", sync=False)
