@@ -117,6 +117,13 @@ def _root(args: argparse.Namespace) -> Path:
     return root
 
 
+def cmd_version(args: argparse.Namespace) -> int:
+    from . import __version__
+
+    print(__version__)
+    return 0
+
+
 def cmd_info(args: argparse.Namespace) -> int:
     print(config.describe())
     return 0
@@ -398,6 +405,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     groups = parser.add_subparsers(dest="group", required=True)
+
+    p_version = groups.add_parser("version", help="print the version of cs-lab")
+    p_version.set_defaults(func=cmd_version)
 
     p_env = groups.add_parser(
         "env",

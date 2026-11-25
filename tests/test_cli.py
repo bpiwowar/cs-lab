@@ -158,3 +158,10 @@ def test_download_does_not_set_the_root_logger_to_info(tmp_path, course):
     main(["cache", "list", "--from", f"{course}:RESOURCES"])
     assert logging.getLogger().level == logging.WARNING
     assert logging.getLogger("cs_lab").level == logging.INFO
+
+
+def test_version(capsys):
+    from cs_lab import __version__, cli
+
+    assert cli.main(["version"]) == 0
+    assert capsys.readouterr().out.strip() == __version__
