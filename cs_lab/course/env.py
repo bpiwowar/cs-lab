@@ -15,9 +15,11 @@ update only checks that the shared one was built from the release's lock.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -134,11 +136,20 @@ def _replay(root: Path, changes: DependencyChanges, result: EnvResult) -> EnvRes
 
 
 def sync(root: Path) -> str:
-    """``uv sync``; an error message, or "" when it went through."""
+    """``uv sync``, its progress shown; an error message, or "" when it went
+    through.
+
+    Not captured: the first sync downloads several GB (PyTorch, CUDA), and a
+    silent command that long looks stuck.
+    """
     if shutil.which("uv") is None:
         return "uv is not installed: run `uv sync` once it is"
-    proc = _uv(["sync"], root)
-    return "" if proc.returncode == 0 else proc.stderr.strip()
+    # The folder's own .venv, whatever environment cs-lab itself runs in
+    # (uvx, another project): uv would warn that VIRTUAL_ENV is not it.
+    environ = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+    sys.stdout.flush()  # what was shown before goes before uv's output
+    code = subprocess.call(["uv", "sync"], cwd=root, env=environ)
+    return "" if code == 0 else f"`uv sync` failed (exit {code}, see above)"
 
 
 def shared_lock_matches(shared_env: Path, lock: Optional[str]) -> Optional[bool]:

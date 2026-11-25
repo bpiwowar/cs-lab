@@ -439,9 +439,13 @@ class Course:
             self.show(f"  warning: {result.error}")
             return 1
         if sync:
+            self.show(
+                "  installing the environment (uv sync): the first time, several"
+                " GB to download (PyTorch...), a few minutes or more"
+            )
             error = course_env.sync(folder.root)
             if error:
-                self.show(f"  warning: uv sync failed:\n{error}")
+                self.show(f"  warning: {error}")
                 return 1
         return 0
 
