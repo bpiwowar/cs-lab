@@ -631,6 +631,7 @@ def cmd_course_init(args: argparse.Namespace) -> int:
         on_conflict=args.on_conflict or "",
         sync=not args.no_sync,
         own_env=args.own_env,
+        shared_cache=not args.no_shared_cache,
     )
 
 
@@ -700,6 +701,12 @@ def add_course_parser(groups) -> None:
         "--own-env",
         action="store_true",
         help="an environment of your own, even where a shared one is available",
+    )
+    p_init.add_argument(
+        "--no-shared-cache",
+        action="store_true",
+        help="with an environment of your own, download the models yourself "
+        "rather than read them from the room's cache",
     )
     add_common(
         p_init,

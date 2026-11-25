@@ -27,6 +27,35 @@ class ReleaseError(Exception):
     """A release that cannot be fetched or used."""
 
 
+@dataclass
+class Room:
+    """A teaching room (or any group of machines sharing a disk) where the
+    course installed an environment and/or a model cache, as absolute paths:
+    a folder uses them on a machine where they exist."""
+
+    name: str = ""
+    shared_env: Optional[str] = None
+    shared_cache: Optional[str] = None
+
+
+def _rooms(data: dict) -> List[Room]:
+    """``rooms`` — or, from a release before it, the one room its top-level
+    ``shared_env`` / ``shared_cache`` describe."""
+    rooms = [
+        Room(
+            str(room.get("name", "")),
+            room.get("shared_env") or None,
+            room.get("shared_cache") or None,
+        )
+        for room in data.get("rooms") or []
+    ]
+    if not rooms and (data.get("shared_env") or data.get("shared_cache")):
+        rooms.append(
+            Room("", data.get("shared_env") or None, data.get("shared_cache") or None)
+        )
+    return rooms
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as stream:
@@ -65,9 +94,10 @@ class Release:
     env: List[str] = field(default_factory=list)
     lock: Optional[str] = None
     source: Optional[str] = None
-    #: Where a teaching room's shared environment for this release lives (an
-    #: absolute path): ``init`` uses it when it exists on the machine.
-    shared_env: Optional[str] = None
+    #: The teaching rooms with a shared environment and/or model cache for
+    #: this release, in order of preference: ``init`` uses the first whose
+    #: paths exist on the machine.
+    rooms: List[Room] = field(default_factory=list)
 
     @classmethod
     def fetch(cls, url: str) -> "Release":
@@ -97,7 +127,7 @@ class Release:
                 env=list(data.get("env", [])),
                 lock=data.get("lock"),
                 source=data.get("source"),
-                shared_env=data.get("shared_env") or None,
+                rooms=_rooms(data),
             )
         except KeyError as exc:
             raise ReleaseError(f"{url}: missing {exc} in the release") from exc

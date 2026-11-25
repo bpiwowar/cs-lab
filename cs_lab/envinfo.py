@@ -129,6 +129,8 @@ class Course:
     release: str
     mode: str
     shared_env: str = ""
+    #: The room's cache `course lab` points an own environment at.
+    shared_cache: str = ""
 
     @property
     def python(self) -> Path:
@@ -289,6 +291,7 @@ def _course(start: Path) -> Optional[Course]:
                 str(data.get("release", "")),
                 str(data.get("mode", "own")),
                 str(data.get("shared_env", "")),
+                str(data.get("shared_cache", "")),
             )
     return None
 
@@ -334,6 +337,9 @@ def _describe(facts: dict, course: Optional[Course]) -> Environment:
     environ = facts["environ"]
     kind, shared = _python(facts)
     value = _variable(environ, ENV_PATH)
+    if not value and course is not None and course.mode != "shared":
+        # what `cs-lab course lab` sets for the notebooks
+        value = course.shared_cache or None
     cache = Path(value) if value else None
     try:
         cached = _cached(cache) if cache is not None and cache.is_dir() else {}

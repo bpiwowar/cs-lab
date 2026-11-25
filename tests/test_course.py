@@ -88,7 +88,12 @@ def v2():
 
 
 def publish(
-    site: Path, files: dict, name: str = "tp-test", shared_env: str = ""
+    site: Path,
+    files: dict,
+    name: str = "tp-test",
+    shared_env: str = "",
+    shared_cache: str = "",
+    rooms: list = (),
 ) -> str:
     """Write a release (zip + release.json) into ``site``; return its URL."""
     site.mkdir(parents=True, exist_ok=True)
@@ -117,6 +122,10 @@ def publish(
         release["lock"] = hashes["uv.lock"]
     if shared_env:
         release["shared_env"] = shared_env
+    if shared_cache:
+        release["shared_cache"] = shared_cache
+    if rooms:
+        release["rooms"] = list(rooms)
     (site / "release.json").write_text(json.dumps(release))
     return site.as_uri()
 
@@ -496,6 +505,131 @@ def test_lab_says_when_the_room_environment_is_missing(tmp_path, site, course):
     shutil.rmtree(shared)
     with pytest.raises(CourseError, match="not on this machine"):
         course_obj.lab(folder)
+
+
+# ---- the room's cache, with an environment of one's own --------------------
+
+
+def test_own_env_records_the_room_cache_when_it_is_here(tmp_path, site, course):
+    course_obj, lines = course
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    url = publish(site, V1, shared_cache=str(cache))
+    folder = tmp_path / "work"
+    assert course_obj.init(url, folder, sync=False) == 0
+    config = Folder(folder).load()
+    assert (config.mode, config.shared_cache) == ("own", str(cache))
+    assert any("room's cache" in line for line in lines)
+
+
+@pytest.mark.parametrize("why", ["absent", "refused", "shared-env"])
+def test_no_room_cache_recorded(tmp_path, site, course, why):
+    course_obj, _ = course
+    cache = tmp_path / "cache"
+    if why != "absent":
+        cache.mkdir()
+    shared = str(shared_env(tmp_path / "room")) if why == "shared-env" else ""
+    url = publish(site, V1, shared_env=shared, shared_cache=str(cache))
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False, shared_cache=why != "refused")
+    assert Folder(folder).load().shared_cache == ""
+
+
+def test_update_follows_a_moved_room_cache(tmp_path, site, course):
+    course_obj, _ = course
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache2").mkdir()
+    url = publish(site, V1, shared_cache=str(tmp_path / "cache"))
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False)
+    publish(site, V1, shared_cache=str(tmp_path / "cache2"))
+    course_obj.update(folder, sync=False)
+    assert Folder(folder).load().shared_cache == str(tmp_path / "cache2")
+
+
+def test_lab_points_an_own_environment_at_the_room_cache(tmp_path, site, monkeypatch):
+    calls = []
+    course_obj = Course(
+        show=lambda _: None,
+        run=lambda cmd, cwd, env=None: calls.append((cmd, env)) or 0,
+    )
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    url = publish(site, V1, shared_cache=str(cache))
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False)
+    (folder / "resources.lock").write_text("{}")
+    monkeypatch.delenv("CS_LAB_CACHE_PATH", raising=False)
+    monkeypatch.delenv("CS_LAB_CACHE_LOCK", raising=False)
+    assert course_obj.lab(folder) == 0
+    ((command, env),) = calls
+    assert command[:3] == ["uv", "run", "jupyter"]
+    assert env["CS_LAB_CACHE_PATH"] == str(cache)
+    assert env["IR_DATASETS_HOME"] == f"{cache}/ir_datasets"
+    assert env["CS_LAB_CACHE_LOCK"] == str((folder / "resources.lock").resolve())
+
+
+# ---- several rooms ----------------------------------------------------------
+
+
+def _room(name, env=None, cache=None):
+    room = {"name": name}
+    if env:
+        room["shared_env"] = str(env)
+    if cache:
+        room["shared_cache"] = str(cache)
+    return room
+
+
+def test_init_takes_the_first_room_that_is_here(tmp_path, site, course):
+    course_obj, lines = course
+    here = shared_env(tmp_path / "lab")
+    rooms = [_room("ppti", tmp_path / "ppti"), _room("lab", here)]
+    url = publish(site, V1, rooms=rooms)
+    folder = tmp_path / "work"
+    assert course_obj.init(url, folder, sync=False) == 0
+    config = Folder(folder).load()
+    assert (config.mode, config.room, config.shared_env) == ("shared", "lab", str(here))
+    assert any("the lab room" in line for line in lines)
+
+
+def test_own_env_takes_the_first_room_cache_that_is_here(tmp_path, site, course):
+    course_obj, _ = course
+    (tmp_path / "lab-cache").mkdir()
+    rooms = [
+        _room("ppti", tmp_path / "ppti", tmp_path / "ppti-cache"),
+        _room("lab", cache=tmp_path / "lab-cache"),
+    ]
+    url = publish(site, V1, rooms=rooms)
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False)
+    config = Folder(folder).load()
+    assert (config.mode, config.room) == ("own", "lab")
+    assert config.shared_cache == str(tmp_path / "lab-cache")
+
+
+def test_update_stays_in_the_folder_room(tmp_path, site, course):
+    course_obj, _ = course
+    lab = shared_env(tmp_path / "lab")
+    url = publish(site, V1, rooms=[_room("ppti", tmp_path / "ppti"), _room("lab", lab)])
+    folder = tmp_path / "work"
+    course_obj.init(url, folder, sync=False)
+    # the first room is now here too, and the lab's environment moved
+    shared_env(tmp_path / "ppti")
+    moved = shared_env(tmp_path / "lab2")
+    rooms = [_room("ppti", tmp_path / "ppti"), _room("lab", moved)]
+    publish(site, V1, rooms=rooms)
+    course_obj.update(folder, sync=False)
+    config = Folder(folder).load()
+    assert (config.room, config.shared_env) == ("lab", str(moved))
+
+
+def test_rooms_from_a_release_before_them():
+    from cs_lab.course.release import _rooms
+
+    assert _rooms({}) == []
+    (room,) = _rooms({"shared_env": "/e", "shared_cache": "/c"})
+    assert (room.name, room.shared_env, room.shared_cache) == ("", "/e", "/c")
 
 
 # ---- safety ----------------------------------------------------------------

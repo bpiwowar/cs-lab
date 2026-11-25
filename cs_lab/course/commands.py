@@ -23,6 +23,7 @@ JupyterLab from whichever the folder uses.
 from __future__ import annotations
 
 import datetime
+import os
 import shutil
 import subprocess
 import sys
@@ -30,12 +31,13 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
+from ..config import ENV_LOCK, ENV_PATH
 from ..envinfo import for_folder
 from . import env as course_env
 from . import notebooks
 from .folder import CHOICES, Config, Folder, FolderError, free_sibling, sibling
 from .plan import ADD, CONFLICT, DELETE, KEEP_REMOVED, UPDATE, FileAction, plan
-from .release import Release, ReleaseError
+from .release import Release, ReleaseError, Room
 
 Ask = Callable[[str], str]
 
@@ -201,8 +203,29 @@ def _git_snapshot(root: Path, message: str) -> bool:
 # ---- the commands ---------------------------------------------------------
 
 
-def _run(command: List[str], cwd: Path) -> int:
-    return subprocess.call(command, cwd=cwd)
+def _run(command: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> int:
+    return subprocess.call(command, cwd=cwd, env=env)
+
+
+def usable_cache(path: Optional[str]) -> bool:
+    """A shared cache that is on this machine and readable."""
+    return bool(path) and os.path.isdir(path) and os.access(path, os.R_OK | os.X_OK)
+
+
+def room_with_env(rooms: Sequence[Room]) -> Optional[Room]:
+    """The first room whose shared environment is on this machine."""
+    return next(
+        (r for r in rooms if r.shared_env and usable_env(Path(r.shared_env))), None
+    )
+
+
+def room_with_cache(rooms: Sequence[Room]) -> Optional[Room]:
+    """The first room whose cache is on this machine."""
+    return next((r for r in rooms if usable_cache(r.shared_cache)), None)
+
+
+def _room_label(room: Room) -> str:
+    return f"the {room.name} room" if room.name else "this room"
 
 
 def usable_env(path: Optional[Path]) -> bool:
@@ -224,6 +247,7 @@ class Course:
         on_conflict: str = "",
         sync: bool = True,
         own_env: bool = False,
+        shared_cache: bool = True,
     ) -> int:
         release = Release.fetch(url)
         folder = Folder(Path(directory) if directory else Path(release.name))
@@ -233,17 +257,32 @@ class Course:
             )
         if shared_env is not None and not usable_env(shared_env):
             raise CourseError(f"no shared environment at {shared_env}")
-        if shared_env is None and not own_env and usable_env(release.shared_env):
-            shared_env = Path(release.shared_env)
-            self.show(
-                f"Using the shared environment of this room, {shared_env} "
-                "(--own-env for one of your own)"
-            )
+        room = None
+        if shared_env is None and not own_env:
+            room = room_with_env(release.rooms)
+            if room is not None:
+                shared_env = Path(room.shared_env)
+                self.show(
+                    f"Using the shared environment of {_room_label(room)}, "
+                    f"{shared_env} (--own-env for one of your own)"
+                )
+        cache = ""
+        if not shared_env and shared_cache:
+            room = room_with_cache(release.rooms)
+            if room is not None:
+                cache = room.shared_cache
+                self.show(
+                    f"Reading the models from {_room_label(room)}'s cache, {cache}, "
+                    "with your own environment (--no-shared-cache to download "
+                    "your own)"
+                )
         config = Config(
             url=release.url,
             name=release.name,
             mode="shared" if shared_env else "own",
             shared_env=str(Path(shared_env).resolve()) if shared_env else "",
+            room=room.name if room else "",
+            shared_cache=cache,
             on_conflict=on_conflict,
         )
         folder.root.mkdir(parents=True, exist_ok=True)
@@ -265,16 +304,7 @@ class Course:
             raise CourseError(
                 f"{config.url} now serves {release.name!r}, not {config.name!r}"
             )
-        moved = release.shared_env
-        if (
-            config.mode == "shared"
-            and moved
-            and moved != config.shared_env
-            and usable_env(Path(moved))
-        ):
-            self.show(f"The shared environment is now {moved}")
-            config.shared_env = moved
-            folder.save(config)
+        self._follow_room(folder, config, release)
         if release.id == config.release and not reset_env:
             self.show(f"Up to date (release {release.id}, {release.created}).")
             return 0
@@ -287,6 +317,26 @@ class Course:
             reset_env=reset_env,
             sync=sync,
         )
+
+    def _follow_room(self, folder: Folder, config: Config, release: Release) -> None:
+        """Take the paths the release now gives for the folder's room (the
+        same name; for a folder from before names, the first room usable
+        here)."""
+        same = [r for r in release.rooms if r.name == config.room]
+        if config.mode == "shared":
+            room = room_with_env(same or release.rooms)
+            moved = room.shared_env if room else None
+            if moved and moved != config.shared_env:
+                self.show(f"The shared environment is now {moved}")
+                config.shared_env = moved
+                folder.save(config)
+        elif config.shared_cache:
+            room = room_with_cache(same or release.rooms)
+            cache = room.shared_cache if room else None
+            if cache and cache != config.shared_cache:
+                self.show(f"The shared cache is now {cache}")
+                config.shared_cache = cache
+                folder.save(config)
 
     def lab(self, directory: Path = Path("."), args: Sequence[str] = ()) -> int:
         """JupyterLab, from the folder's environment (shared or its own)."""
@@ -307,7 +357,25 @@ class Course:
             if shutil.which("uv") is None:
                 raise CourseError("uv is not installed: https://docs.astral.sh/uv/")
             command = ["uv", "run", "jupyter", "lab", *args]
+            environ = self.cache_environ(folder, config)
+            if environ is not None:
+                return self.run(command, folder.root, environ)
         return self.run(command, folder.root)
+
+    def cache_environ(self, folder: Folder, config: Config) -> Optional[Dict[str, str]]:
+        """The environment pointing an own environment's notebooks at the
+        room's cache (and the folder's lock), or None when there is none."""
+        if not usable_cache(config.shared_cache):
+            return None
+        cache = config.shared_cache
+        environ = dict(os.environ)
+        environ.setdefault(ENV_PATH, cache)
+        environ.setdefault("IR_DATASETS_HOME", f"{cache}/ir_datasets")
+        lock = folder.root / "resources.lock"
+        if lock.is_file():
+            environ.setdefault(ENV_LOCK, str(lock.resolve()))
+        self.show(f"Models from the shared cache {cache}")
+        return environ
 
     def status(self, directory: Path = Path("."), offline: bool = False) -> int:
         folder = Folder(directory)

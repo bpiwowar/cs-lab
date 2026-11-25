@@ -38,6 +38,11 @@ class Config:
     release: str = ""
     mode: str = "own"
     shared_env: str = ""
+    #: The release's room the paths come from (``update`` follows it).
+    room: str = ""
+    #: In an own environment, the room's cache `course lab` points the
+    #: notebooks at (CS_LAB_CACHE_PATH); empty: none.
+    shared_cache: str = ""
     on_conflict: str = ""
 
     def dumps(self) -> str:
